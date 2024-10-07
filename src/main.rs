@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 const MAX_HEIGHT: f32    = 5.0;
 const MAX_SPEED: f32     = 25.0;
 const MAX_TIME: f32      = 10.0;
@@ -35,35 +37,78 @@ struct CommandCenter {
 }
 
 
+struct GPS {
+    drones_positions: HashMap<u32, Coordinates>,
+}
+
+impl GPS {
+    fn connect_drone(&mut self, drone: &Drone) {
+        self.drones_positions.insert(drone.id, drone.position.clone());
+    }
+    
+    fn update_position(&mut self, drone: &Drone, time: f32) {
+        match self.drones_positions.get(&drone.id) {
+            Some(drone_position) => {
+                let position = drone_position.clone();
+
+                position.x = drone.velocity.x * time +
+                    drone.acceleration.x * time.powf(2.0) / 2.0;
+                position.y += drone.velocity.y * time +
+                    drone.acceleration.y * time.powf(2.0) / 2.0;
+                position.z += drone.velocity.z * time +
+                    drone.acceleration.z * time.powf(2.0) / 2.0;
+            
+                self.drones_positions.insert(drone.id, position);
+                return
+            },
+            None => return,
+        }
+
+    }
+
+}
+
+
 struct Drone {
-    max_speed: f32
+    id: u32,
+    max_speed: f32,
     position: Coordinates,
     velocity: Coordinates,
     acceleration: Coordinates,
-    direction: Coordinates,
+    destination: Coordinates,
     //infection_state: i8,
-    suppressed: bool,
+    command_center: CommandCenter,
+    command_center_connection: bool,
+    gps: GPS,
+    gps_connection: bool,
 }
 
 impl Drone {
     fn set_destination(&mut self, destination: &Coordinates) {
-        self.velocity.x = destination.x - self.position.x,
-        self.velocity.y = destination.y - self.position.y,
-        self.velocity.z = destination.z - self.position.z,
+        self.velocity.x = destination.x - self.position.x;
+        self.velocity.y = destination.y - self.position.y;
+        self.velocity.z = destination.z - self.position.z;
         
-        self.velocity.limit_speed(max_speed);
+        self.velocity.limit_speed(self.max_speed);
         // TODO change acceleration
     }
     
     fn update_position(&mut self, time: f32) {
-        self.position.x += self.velocity.x * time +
-            self.acceleration.x * time.powf(2.0) / 2;
-        self.position.y += self.velocity.y * time +
-            self.acceleration.y * time.powf(2.0) / 2;
-        self.position.z += self.velocity.z * time +
-            self.acceleration.z * time.powf(2.0) / 2;
-    }
+        if self.gps_connection {
+            self.velocity.z = 0.0;
+            self.acceleration.z = 0.0;
+        }
+        else {
+            self.set_destination(&self.destination);
+        }
 
+        self.position.x += self.velocity.x * time +
+            self.acceleration.x * time.powf(2.0) / 2.0;
+        self.position.y += self.velocity.y * time +
+            self.acceleration.y * time.powf(2.0) / 2.0;
+        self.position.z += self.velocity.z * time +
+            self.acceleration.z * time.powf(2.0) / 2.0;
+    }
 }
 
 
@@ -88,6 +133,13 @@ impl RadarWarfareDevice {
    
     fn suppress(&self, drone: &mut Drone) -> bool {
         drone.suppressed = self.in_radius(drone);
+        
+        if !drone.suppressed {
+            drone.velocity.x = drone.destination.x - drone.position.x;
+            drone.velocity.y = drone.destination.y - drone.position.y;
+            drone.velocity.z = drone.destination.z - drone.position.z;
+            drone.velocity.limit_speed(MAX_SPEED); 
+        }
         
         drone.suppressed
     }
@@ -121,7 +173,7 @@ fn main() {
         },
         //infection_state: 0,
         suppressed: false,
-    }; 
+    };
     let rwd = RadarWarfareDevice {
         position: Coordinates {
             x: 0.0,
@@ -149,22 +201,18 @@ fn main() {
         if rwd.suppress(&mut drone) {
             println!("Suppressed by RWD.");
             
-            velocity.z = 0.0;
-            velocity.limit_speed(MAX_SPEED);
+            drone.velocity.z = 0.0;
+            drone.velocity.limit_speed(MAX_SPEED);
             println!("Drone velocity:\n\tx = {}, y = {}, z = {}",
                      velocity.x, velocity.y, velocity.z);    
         }
         else {
             println!("Not suppressed by RWD.");
             
-            velocity.x = destination_position.x - drone.position.x;
-            velocity.y = destination_position.y - drone.position.y;
-            velocity.z = destination_position.z - drone.position.z;
-            velocity.limit_speed(MAX_SPEED);
             println!("Drone velocity:\n\tx = {}, y = {}, z = {}",
-                     velocity.x, velocity.y, velocity.z);
+                     drone.velocity.x, drone.velocity.y, drone.velocity.z);
         }
 
         time += STEP_DURATION;
-    } 
+    }
 }
