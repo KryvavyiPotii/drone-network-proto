@@ -1,147 +1,142 @@
-use std::collections::HashMap;
-
 const MAX_HEIGHT: f32    = 5.0;
 const MAX_SPEED: f32     = 25.0;
 const MAX_TIME: f32      = 10.0;
 const STEP_DURATION: f32 = 0.5;
 const RWD_RADIUS: f32    = MAX_HEIGHT;
 
-
-struct Coordinates {
-    x: f32,
-    y: f32,
-    z: f32,
+#[derive(Clone)]
+struct Coordinates3D { 
+    x: f32, 
+    y: f32, 
+    z: f32, 
 }
 
-impl Coordinates {
+impl Coordinates3D {
+    fn set_coordinates(&mut self, x: f32, y: f32, z: f32) {
+        self.x = x;
+        self.y = y;
+        self.z = z;
+    }
+
     fn size(&self) -> f32 {
         (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0))
             .sqrt()
     }
 
-    fn limit_speed(&mut self, speed: f32) {
-        let size: f32 = self.size();
-
-        if speed > 0.0 && size > speed {
-            self.x = self.x * speed / size;
-            self.y = self.y * speed / size;
-            self.z = self.z * speed / size;
+    fn truncate_vector_size(&mut self, truncation_size: f32) { 
+        let vector_size: f32 = self.size();
+        
+        if truncation_size > 0.0 && vector_size > truncation_size {
+            self.x = self.x * truncation_size / vector_size;
+            self.y = self.y * truncation_size / vector_size;
+            self.z = self.z * truncation_size / vector_size;
         }
     }
-
 }
 
 
+enum SignalLevel {
+    Green,
+    Yellow,
+    Red,
+    Black,
+}
+
+
+#[derive(Clone)]
 struct CommandCenter {
-    position: Coordinates,
-}
-
-
-struct GPS {
-    drones_positions: HashMap<u32, Coordinates>,
-}
-
-impl GPS {
-    fn connect_drone(&mut self, drone: &Drone) {
-        self.drones_positions.insert(drone.id, drone.position.clone());
-    }
-    
-    fn update_position(&mut self, drone: &Drone, time: f32) {
-        match self.drones_positions.get(&drone.id) {
-            Some(drone_position) => {
-                let position = drone_position.clone();
-
-                position.x = drone.velocity.x * time +
-                    drone.acceleration.x * time.powf(2.0) / 2.0;
-                position.y += drone.velocity.y * time +
-                    drone.acceleration.y * time.powf(2.0) / 2.0;
-                position.z += drone.velocity.z * time +
-                    drone.acceleration.z * time.powf(2.0) / 2.0;
-            
-                self.drones_positions.insert(drone.id, position);
-                return
-            },
-            None => return,
-        }
-
-    }
-
+    position: Coordinates3D,
 }
 
 
 struct Drone {
-    id: u32,
     max_speed: f32,
-    position: Coordinates,
-    velocity: Coordinates,
-    acceleration: Coordinates,
-    destination: Coordinates,
-    //infection_state: i8,
+    global_position: Coordinates3D,
+    position: Coordinates3D,
+    velocity: Coordinates3D,
+    acceleration: Coordinates3D,
+    destination: Coordinates3D,
+    // TODO infection_state
     command_center: CommandCenter,
-    command_center_connection: bool,
-    gps: GPS,
+    // TODO network or command center connection state
     gps_connection: bool,
 }
 
 impl Drone {
-    fn set_destination(&mut self, destination: &Coordinates) {
+    fn set_destination(&mut self, destination: &Coordinates3D) {
         self.velocity.x = destination.x - self.position.x;
         self.velocity.y = destination.y - self.position.y;
         self.velocity.z = destination.z - self.position.z;
         
-        self.velocity.limit_speed(self.max_speed);
+        self.velocity.truncate_vector_size(self.max_speed);
         // TODO change acceleration
     }
     
     fn update_position(&mut self, time: f32) {
-        if self.gps_connection {
-            self.velocity.z = 0.0;
-            self.acceleration.z = 0.0;
-        }
-        else {
-            self.set_destination(&self.destination);
-        }
-
-        self.position.x += self.velocity.x * time +
+        self.global_position.x += self.velocity.x * time +
             self.acceleration.x * time.powf(2.0) / 2.0;
-        self.position.y += self.velocity.y * time +
+        self.global_position.y += self.velocity.y * time +
             self.acceleration.y * time.powf(2.0) / 2.0;
-        self.position.z += self.velocity.z * time +
+        self.global_position.z += self.velocity.z * time +
             self.acceleration.z * time.powf(2.0) / 2.0;
+        
+        if self.gps_connection {
+            self.position.x = self.global_position.x; 
+            self.position.y = self.global_position.y; 
+            self.position.z = self.global_position.z; 
+        }
     }
 }
 
+enum SuppressionFrequencyType {
+    GPS
+    // TODO Control
+}
+
+enum SuppressionAreaType {
+    Dome(f32)
+    // TODO Rifle
+}
 
 struct RadarWarfareDevice {
-    position: Coordinates,
-    radar_radius: f32,
+    position: Coordinates3D,
+    frequency: SuppressionFrequencyType,
+    area: SuppressionAreaType,
 }
 
 impl RadarWarfareDevice {
-    fn in_radius(&self, drone: &Drone) -> bool {
-        let drone_position = &drone.position;
+    fn in_area(&self, drone: &Drone) -> bool {
+        let drone_position = &drone.global_position;
 
-        let distance: f32 = (
-            (drone_position.x - self.position.x).powf(2.0) +
-            (drone_position.y - self.position.y).powf(2.0) +
-            (drone_position.z - self.position.z).powf(2.0)
-            ).sqrt();
+        match self.area {
+            SuppressionAreaType::Dome(radius) => {
+                let distance: f32 = (
+                    (drone_position.x - self.position.x).powf(2.0) +
+                    (drone_position.y - self.position.y).powf(2.0) +
+                    (drone_position.z - self.position.z).powf(2.0)
+                    ).sqrt();
+                
+                if distance <= radius { true }
+                else { false }
+            },
+            _ => false
+        }
 
-        if distance <= self.radar_radius { true }
-        else { false }
     }
    
     fn suppress(&self, drone: &mut Drone) -> bool {
-        drone.suppressed = self.in_radius(drone);
-        
-        if !drone.suppressed {
-            drone.velocity.x = drone.destination.x - drone.position.x;
-            drone.velocity.y = drone.destination.y - drone.position.y;
-            drone.velocity.z = drone.destination.z - drone.position.z;
-            drone.velocity.limit_speed(MAX_SPEED); 
+        if self.in_area(drone) {
+            match self.frequency {
+                SuppressionFrequencyType::GPS => {
+                    drone.gps_connection = false;
+                    true
+                },
+                _ => false
+            }
         }
-        
-        drone.suppressed
+        else {
+            false
+        }
     }
 
 }
@@ -149,70 +144,112 @@ impl RadarWarfareDevice {
 
 struct World {
     command_center: CommandCenter,
-    drones: Drone,
-    rwds: RadarWarfareDevice,
+    drones: Vec<Drone>,
+    radar_warfare_devices: Vec<RadarWarfareDevice>,
     current_time: f32,
     end_time: f32,
 }
 
+impl World {
+    fn simulate(&mut self) {
+        for (i, drone) in self.drones.iter().enumerate() {
+            self.print_coordinates(&format!("Drone{i}"),
+                "position",
+                &drone.global_position);
+            self.print_coordinates(&format!("Drone{i}"),
+                "velocity",
+                &drone.velocity);
+        }
+
+        for (j, rwd) in self.radar_warfare_devices.iter().enumerate() {
+            self.print_coordinates(&format!("RWD{j}"),
+                "position",
+                &rwd.position);
+        }
+
+        println!("Flight started!"); 
+        
+        while self.current_time < self.end_time {
+            for (i, drone) in self.drones.iter_mut().enumerate() {
+                for (j, rwd) in self.radar_warfare_devices.iter().enumerate() {
+                    if rwd.suppress(drone) {
+                        println!("RWD{j} suppressed Drone{i}!");
+                    }
+                }
+                drone.update_position(STEP_DURATION);
+                
+                self.print_coordinates(&format!("Drone{i}"),
+                    "position",
+                    &drone.global_position);
+                self.print_coordinates(&format!("Drone{i}"),
+                    "velocity",
+                    &drone.velocity); 
+
+                self.current_time += STEP_DURATION;
+            }
+        
+            println!("Flight finished!");
+        }
+    }
+
+    fn print_coordinates(&self, entity: &str, coordinate_name: &str,
+                         position: &Coordinates3D) {
+        println!("{} {}:\n\tx = {}, y = {}, z = {}",
+                 entity, coordinate_name, position.x, position.y, position.z); 
+    }
+}
 
 fn main() {
-    let mut drone = Drone {
+    let drone_command_center = CommandCenter {
+        position: Coordinates3D {
+            x: 200.0,
+            y: 100.0,
+            z: 0.0,
+        }
+    };
+
+    let drone = Drone {
         max_speed: MAX_SPEED,
-        position: Coordinates {
+        global_position: Coordinates3D {
             x: 150.3,
             y: 50.6,
             z: 25.5, 
         },
-        velocity: Coordinates { x: 0.0, y: 0.0, z: 0.0, },
-        acceleration: Coordinates { x: 0.0, y: 0.0, z: 0.0, },
-        direction: Coordinates {
-            x: 1.0,
-            y: 2.0,
-            z: 3.0,
+        position: Coordinates3D {
+            x: 150.3,
+            y: 50.6,
+            z: 25.5, 
         },
-        //infection_state: 0,
-        suppressed: false,
+        velocity: Coordinates3D { x: 0.0, y: 0.0, z: 0.0, },
+        acceleration: Coordinates3D { x: 0.0, y: 0.0, z: 0.0, },
+        destination: Coordinates3D {
+            x: 5.0,
+            y: 10.0,
+            z: 2.0,
+        },
+        // TODO infection_state: 0,
+        command_center: drone_command_center.clone(),
+        gps_connection: true,
+        
     };
-    let rwd = RadarWarfareDevice {
-        position: Coordinates {
+
+    let radar_warfare_device = RadarWarfareDevice {
+        position: Coordinates3D {
             x: 0.0,
             y: 5.0,
             z: 2.0,
         },
-        radar_radius: RWD_RADIUS,
+        frequency: SuppressionFrequencyType::GPS,
+        area: SuppressionAreaType::Dome(RWD_RADIUS),
     };
 
-    println!("Drone position:\n\tx = {}, y = {}, z = {}",
-             drone.position.x, drone.position.y, drone.position.z);
-    println!("Drone velocity:\n\tx = {}, y = {}, z = {}",
-             drone.velocity.x, drone.velocity.y, drone.velocity.z);
-    println!("RWD position:\n\tx = {}, y = {}, z = {}",
-             rwd.position.x, rwd.position.y, rwd.position.z); 
+    let mut world = World {
+        command_center: drone_command_center.clone(),
+        drones: vec![drone],
+        radar_warfare_devices: vec![radar_warfare_device],
+        current_time: 0.0,
+        end_time: MAX_TIME,    
+    };
 
-    println!("Flight started!"); 
-    let mut time: f32 = 0.0;
-    while time < MAX_TIME {
-        drone.update_position(STEP_DURATION);
-
-        println!("Drone position:\n\tx = {}, y = {}, z = {}",
-             drone.position.x, drone.position.y, drone.position.z);
-        
-        if rwd.suppress(&mut drone) {
-            println!("Suppressed by RWD.");
-            
-            drone.velocity.z = 0.0;
-            drone.velocity.limit_speed(MAX_SPEED);
-            println!("Drone velocity:\n\tx = {}, y = {}, z = {}",
-                     velocity.x, velocity.y, velocity.z);    
-        }
-        else {
-            println!("Not suppressed by RWD.");
-            
-            println!("Drone velocity:\n\tx = {}, y = {}, z = {}",
-                     drone.velocity.x, drone.velocity.y, drone.velocity.z);
-        }
-
-        time += STEP_DURATION;
-    }
+    world.simulate();
 }
