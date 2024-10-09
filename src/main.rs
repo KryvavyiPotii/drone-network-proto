@@ -63,10 +63,21 @@ struct Drone {
 }
 
 impl Drone {
-    fn set_destination(&mut self, destination: &Coordinates3D) {
-        self.velocity.x = destination.x - self.position.x;
-        self.velocity.y = destination.y - self.position.y;
-        self.velocity.z = destination.z - self.position.z;
+    fn set_destination(&mut self, destination: Option<&Coordinates3D>) {
+        match destination {
+            Some(coordinates) => self.destination.set_coordinates(
+                coordinates.x,
+                coordinates.y,
+                coordinates.z
+            ),
+            None => (),
+        }
+
+        self.velocity.set_coordinates(
+            self.destination.x - self.position.x,
+            self.destination.y - self.position.y,
+            self.destination.z - self.position.z
+        );
         
         self.velocity.truncate_vector_size(self.max_speed);
         // TODO change acceleration
@@ -81,9 +92,11 @@ impl Drone {
             self.acceleration.z * time.powf(2.0) / 2.0;
         
         if self.gps_connection {
-            self.position.x = self.global_position.x; 
-            self.position.y = self.global_position.y; 
-            self.position.z = self.global_position.z; 
+            self.position.set_coordinates(
+                self.global_position.x,
+                self.global_position.y,
+                self.global_position.z
+            ); 
         }
     }
 }
@@ -152,23 +165,35 @@ struct World {
 
 impl World {
     fn simulate(&mut self) {
-        for (i, drone) in self.drones.iter().enumerate() {
-            self.print_coordinates(&format!("Drone{i}"),
-                "position",
-                &drone.global_position);
-            self.print_coordinates(&format!("Drone{i}"),
-                "velocity",
-                &drone.velocity);
+        println!("Time\tEntity\tId\tData\tX\tY\tZ");
+        for (i, drone) in self.drones.iter_mut().enumerate() {
+            drone.set_destination(None);
+            println!("{}\tdrone\t{}\tposition\t{}\t{}\t{}",
+                self.current_time,
+                i,
+                &drone.global_position.x,
+                &drone.global_position.y,
+                &drone.global_position.z
+            );
+            println!("{}\tdrone\t{}\tvelocity\t{}\t{}\t{}",
+                self.current_time,
+                i,
+                &drone.velocity.x,
+                &drone.velocity.y,
+                &drone.velocity.z
+            );
         }
 
         for (j, rwd) in self.radar_warfare_devices.iter().enumerate() {
-            self.print_coordinates(&format!("RWD{j}"),
-                "position",
-                &rwd.position);
+            println!("{}\trwd\t{}\tposition\t{}\t{}\t{}",
+                self.current_time,
+                j,
+                &rwd.position.x,
+                &rwd.position.y,
+                &rwd.position.z
+            );
         }
 
-        println!("Flight started!"); 
-        
         while self.current_time < self.end_time {
             for (i, drone) in self.drones.iter_mut().enumerate() {
                 for (j, rwd) in self.radar_warfare_devices.iter().enumerate() {
@@ -176,26 +201,27 @@ impl World {
                         println!("RWD{j} suppressed Drone{i}!");
                     }
                 }
+
                 drone.update_position(STEP_DURATION);
                 
-                self.print_coordinates(&format!("Drone{i}"),
-                    "position",
-                    &drone.global_position);
-                self.print_coordinates(&format!("Drone{i}"),
-                    "velocity",
-                    &drone.velocity); 
+                println!("{}\tdrone\t{}\tposition\t{}\t{}\t{}",
+                    self.current_time,
+                    i,
+                    &drone.global_position.x,
+                    &drone.global_position.y,
+                    &drone.global_position.z
+                );
+                println!("{}\tdrone\t{}\tvelocity\t{}\t{}\t{}",
+                    self.current_time,
+                    i,
+                    &drone.velocity.x,
+                    &drone.velocity.y,
+                    &drone.velocity.z
+                );
 
                 self.current_time += STEP_DURATION;
             }
-        
-            println!("Flight finished!");
         }
-    }
-
-    fn print_coordinates(&self, entity: &str, coordinate_name: &str,
-                         position: &Coordinates3D) {
-        println!("{} {}:\n\tx = {}, y = {}, z = {}",
-                 entity, coordinate_name, position.x, position.y, position.z); 
     }
 }
 
