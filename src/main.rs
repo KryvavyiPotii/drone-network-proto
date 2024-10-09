@@ -1,8 +1,11 @@
-const MAX_HEIGHT: f32    = 5.0;
-const MAX_SPEED: f32     = 25.0;
-const MAX_TIME: f32      = 10.0;
-const STEP_DURATION: f32 = 0.5;
-const RWD_RADIUS: f32    = MAX_HEIGHT;
+use std::{thread, time};
+
+const MAX_HEIGHT_IN_METRES: f32          = 50.0;
+const MAX_SPEED_IN_METRES_PER_S: f32     = 25.0;
+const MAX_TIME_IN_MILLIS: u64            = 10000;
+const STEP_DURATION_IN_MILLIS: u64       = 250;
+const RWD_RADIUS_IN_METRES: f32          = 20.0;
+const DESTINATION_RADIUS_IN_METRES: f32  = 5.0;
 
 #[derive(Clone)]
 struct Coordinates3D { 
@@ -12,12 +15,6 @@ struct Coordinates3D {
 }
 
 impl Coordinates3D {
-    fn set_coordinates(&mut self, x: f32, y: f32, z: f32) {
-        self.x = x;
-        self.y = y;
-        self.z = z;
-    }
-
     fn size(&self) -> f32 {
         (self.x.powf(2.0) + self.y.powf(2.0) + self.z.powf(2.0))
             .sqrt()
@@ -31,6 +28,16 @@ impl Coordinates3D {
             self.y = self.y * truncation_size / vector_size;
             self.z = self.z * truncation_size / vector_size;
         }
+    }
+
+    fn distance(&self, destination: &Coordinates3D) -> f32 {
+        let difference = Coordinates3D {
+            x: destination.x - self.x,
+            y: destination.y - self.y,
+            z: destination.z - self.z 
+        };
+
+        difference.size() 
     }
 }
 
@@ -58,52 +65,69 @@ struct Drone {
     destination: Coordinates3D,
     // TODO infection_state
     command_center: CommandCenter,
-    // TODO network or command center connection state
+    network_connection: bool,
     gps_connection: bool,
 }
 
 impl Drone {
     fn set_destination(&mut self, destination: Option<&Coordinates3D>) {
         match destination {
-            Some(coordinates) => self.destination.set_coordinates(
-                coordinates.x,
-                coordinates.y,
-                coordinates.z
-            ),
+            Some(coordinates) => {
+                self.destination.x = coordinates.x;
+                self.destination.y = coordinates.y;
+                self.destination.z = coordinates.z;
+            },
             None => (),
         }
 
-        self.velocity.set_coordinates(
-            self.destination.x - self.position.x,
-            self.destination.y - self.position.y,
-            self.destination.z - self.position.z
-        );
+        self.velocity.x = self.destination.x - self.position.x;
+        self.velocity.y = self.destination.y - self.position.y;
+        self.velocity.z = self.destination.z - self.position.z;
         
         self.velocity.truncate_vector_size(self.max_speed);
         // TODO change acceleration
     }
     
-    fn update_position(&mut self, time: f32) {
-        self.global_position.x += self.velocity.x * time +
-            self.acceleration.x * time.powf(2.0) / 2.0;
-        self.global_position.y += self.velocity.y * time +
-            self.acceleration.y * time.powf(2.0) / 2.0;
-        self.global_position.z += self.velocity.z * time +
-            self.acceleration.z * time.powf(2.0) / 2.0;
+    fn update_position(&mut self, time_in_millis: u64) {
+        let time_in_secs = time_in_millis as f32 / 1000.0;
+
+        self.global_position.x += self.velocity.x * time_in_secs +
+            self.acceleration.x * time_in_secs.powf(2.0) / 2.0;
+        self.global_position.y += self.velocity.y * time_in_secs +
+            self.acceleration.y * time_in_secs.powf(2.0) / 2.0;
+        self.global_position.z += self.velocity.z * time_in_secs +
+            self.acceleration.z * time_in_secs.powf(2.0) / 2.0;
         
         if self.gps_connection {
-            self.position.set_coordinates(
-                self.global_position.x,
-                self.global_position.y,
-                self.global_position.z
-            ); 
+            self.set_destination(None);
+
+            self.position.x = self.global_position.x;
+            self.position.y = self.global_position.y;
+            self.position.z = self.global_position.z;
+            
+            self.reached_destination();
+        }
+        else {
+            self.velocity.z = 0.0;
+            self.acceleration.z = 0.0;
+
+            self.velocity.truncate_vector_size(self.max_speed);
+            // TODO truncate acceleration
+        }
+    }
+
+    fn reached_destination(&mut self) {
+        let distance_to_destination = self.position.distance(&self.destination); 
+        
+        if distance_to_destination <= DESTINATION_RADIUS_IN_METRES {
+            self.network_connection = false;
         }
     }
 }
 
 enum SuppressionFrequencyType {
-    GPS
-    // TODO Control
+    GPS,
+    Control
 }
 
 enum SuppressionAreaType {
@@ -131,8 +155,7 @@ impl RadarWarfareDevice {
                 
                 if distance <= radius { true }
                 else { false }
-            },
-            _ => false
+            }
         }
 
     }
@@ -144,12 +167,13 @@ impl RadarWarfareDevice {
                     drone.gps_connection = false;
                     true
                 },
-                _ => false
+                SuppressionFrequencyType::Control => {
+                    drone.network_connection = false;
+                    true
+                },
             }
         }
-        else {
-            false
-        }
+        else { false }
     }
 
 }
@@ -159,24 +183,26 @@ struct World {
     command_center: CommandCenter,
     drones: Vec<Drone>,
     radar_warfare_devices: Vec<RadarWarfareDevice>,
-    current_time: f32,
-    end_time: f32,
+    current_time_in_millis: u64,
+    end_time_in_millis: u64,
 }
 
 impl World {
     fn simulate(&mut self) {
+        let step_duration = time::Duration::from_millis(STEP_DURATION_IN_MILLIS);
+
         println!("Time\tEntity\tId\tData\tX\tY\tZ");
         for (i, drone) in self.drones.iter_mut().enumerate() {
             drone.set_destination(None);
             println!("{}\tdrone\t{}\tposition\t{}\t{}\t{}",
-                self.current_time,
+                self.current_time_in_millis,
                 i,
                 &drone.global_position.x,
                 &drone.global_position.y,
                 &drone.global_position.z
             );
             println!("{}\tdrone\t{}\tvelocity\t{}\t{}\t{}",
-                self.current_time,
+                self.current_time_in_millis,
                 i,
                 &drone.velocity.x,
                 &drone.velocity.y,
@@ -186,7 +212,7 @@ impl World {
 
         for (j, rwd) in self.radar_warfare_devices.iter().enumerate() {
             println!("{}\trwd\t{}\tposition\t{}\t{}\t{}",
-                self.current_time,
+                self.current_time_in_millis,
                 j,
                 &rwd.position.x,
                 &rwd.position.y,
@@ -194,33 +220,59 @@ impl World {
             );
         }
 
-        while self.current_time < self.end_time {
+        while self.current_time_in_millis < self.end_time_in_millis {
             for (i, drone) in self.drones.iter_mut().enumerate() {
+                let mut gps_suppressed: bool = false;
+                let mut network_connection_suppressed: bool = false;
+
+                drone.update_position(STEP_DURATION_IN_MILLIS);
+                
+                if drone.network_connection {
+                    println!("{}\tdrone\t{}\tposition\t{}\t{}\t{}",
+                        self.current_time_in_millis,
+                        i,
+                        &drone.global_position.x,
+                        &drone.global_position.y,
+                        &drone.global_position.z
+                    );
+                    println!("{}\tdrone\t{}\tvelocity\t{}\t{}\t{}",
+                        self.current_time_in_millis,
+                        i,
+                        &drone.velocity.x,
+                        &drone.velocity.y,
+                        &drone.velocity.z
+                    );
+                }
+                else {
+                    println!("[INFO] Drone{} reached destination", i);
+                    // TODO remove drone from network
+                    continue;
+                }
+                
                 for (j, rwd) in self.radar_warfare_devices.iter().enumerate() {
-                    if rwd.suppress(drone) {
-                        println!("RWD{j} suppressed Drone{i}!");
+                    if rwd.suppress(drone) &&
+                        (!gps_suppressed || !network_connection_suppressed) {
+                        match rwd.frequency {
+                            SuppressionFrequencyType::GPS =>
+                                gps_suppressed = true,
+                            SuppressionFrequencyType::Control => 
+                                network_connection_suppressed = true
+                        }
+                        println!("[INFO] RWD{j} suppressed Drone{i}!");
                     }
                 }
 
-                drone.update_position(STEP_DURATION);
-                
-                println!("{}\tdrone\t{}\tposition\t{}\t{}\t{}",
-                    self.current_time,
-                    i,
-                    &drone.global_position.x,
-                    &drone.global_position.y,
-                    &drone.global_position.z
-                );
-                println!("{}\tdrone\t{}\tvelocity\t{}\t{}\t{}",
-                    self.current_time,
-                    i,
-                    &drone.velocity.x,
-                    &drone.velocity.y,
-                    &drone.velocity.z
-                );
-
-                self.current_time += STEP_DURATION;
+                if !gps_suppressed {
+                    drone.gps_connection = true;
+                }
+                if !network_connection_suppressed {
+                    drone.network_connection = true;
+                }
             }
+
+            thread::sleep(step_duration);
+
+            self.current_time_in_millis += STEP_DURATION_IN_MILLIS;
         }
     }
 }
@@ -235,7 +287,7 @@ fn main() {
     };
 
     let drone = Drone {
-        max_speed: MAX_SPEED,
+        max_speed: MAX_SPEED_IN_METRES_PER_S,
         global_position: Coordinates3D {
             x: 150.3,
             y: 50.6,
@@ -255,6 +307,7 @@ fn main() {
         },
         // TODO infection_state: 0,
         command_center: drone_command_center.clone(),
+        network_connection: true,
         gps_connection: true,
         
     };
@@ -266,15 +319,15 @@ fn main() {
             z: 2.0,
         },
         frequency: SuppressionFrequencyType::GPS,
-        area: SuppressionAreaType::Dome(RWD_RADIUS),
+        area: SuppressionAreaType::Dome(RWD_RADIUS_IN_METRES),
     };
 
     let mut world = World {
         command_center: drone_command_center.clone(),
         drones: vec![drone],
         radar_warfare_devices: vec![radar_warfare_device],
-        current_time: 0.0,
-        end_time: MAX_TIME,    
+        current_time_in_millis: 0,
+        end_time_in_millis: MAX_TIME_IN_MILLIS,    
     };
 
     world.simulate();
