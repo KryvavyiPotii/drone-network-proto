@@ -1,17 +1,45 @@
 use plotters::prelude::*;
 use crate::constants::*;
 
+fn _equation_of_motion_1d(
+    start_position: f32, 
+    velocity: f32, 
+    time_in_secs: f32) -> f32 {
+    start_position + velocity * time_in_secs
+}
+
+// TODO acceleration
+fn _equation_of_motion_3d(
+    start_position: &Coordinates3D,
+    velocity: &Coordinates3D,
+    time_in_secs: f32) -> Coordinates3D {
+    Coordinates3D::new(
+        _equation_of_motion_1d(start_position.x, velocity.x, time_in_secs),
+        _equation_of_motion_1d(start_position.y, velocity.y, time_in_secs),
+        _equation_of_motion_1d(start_position.z, velocity.z, time_in_secs),
+    )
+}
 
 #[derive(Clone)]
 pub struct Coordinates3D { 
-    pub x: f32, 
-    pub y: f32, 
-    pub z: f32, 
+    x: f32, 
+    y: f32, 
+    z: f32, 
 }
 
 impl Coordinates3D {
     pub fn new(x: f32, y: f32, z: f32) -> Coordinates3D {
         Coordinates3D { x, y, z }
+    }
+
+    pub fn get_coordinates(&self) -> (f32, f32, f32) {
+        (self.x, self.y, self.z)
+    }
+
+    pub fn set_coordinates(&mut self, coordinates: (f32, f32, f32)) {
+        self.x = coordinates.0;
+        self.y = coordinates.1;
+        self.z = coordinates.2;
     }
 
     pub fn size(&self) -> f32 {
@@ -23,20 +51,30 @@ impl Coordinates3D {
         let vector_size: f32 = self.size();
         
         if truncation_size > 0.0 && vector_size > truncation_size {
-            self.x = self.x * truncation_size / vector_size;
-            self.y = self.y * truncation_size / vector_size;
-            self.z = self.z * truncation_size / vector_size;
+            self.set_coordinates((
+                self.x * truncation_size / vector_size,
+                self.y * truncation_size / vector_size,
+                self.z * truncation_size / vector_size
+            ));
         }
     }
 
-    pub fn distance(&self, destination: &Coordinates3D) -> f32 {
-        let difference = Coordinates3D {
-            x: destination.x - self.x,
-            y: destination.y - self.y,
-            z: destination.z - self.z 
-        };
+    pub fn point_vector_to(&self, other: &Coordinates3D) -> Coordinates3D {
+        Coordinates3D::new(
+            other.x - self.x,
+            other.y - self.y,
+            other.z - self.z
+        )
+    }
 
-        difference.size() 
+    pub fn distance(&self, other: &Coordinates3D) -> f32 {
+        self.point_vector_to(other).size() 
+    }
+}
+
+impl From<(f32, f32, f32)> for Coordinates3D {
+    fn from(value: (f32, f32, f32)) -> Coordinates3D {
+        Coordinates3D::new(value.0, value.1, value.2)
     }
 }
 
@@ -51,98 +89,112 @@ pub enum SignalLevel {
 
 #[derive(Clone)]
 pub struct CommandCenter {
-    pub position: Coordinates3D,
+    position_in_metres: Coordinates3D,
 }
 
 impl CommandCenter {
-    pub fn new(position: &Coordinates3D) -> CommandCenter {
-        CommandCenter { position: position.clone() }
+    pub fn new(position: Coordinates3D) -> CommandCenter {
+        CommandCenter { position_in_metres: position }
+    }
+    
+    pub fn get_position(&self) -> Coordinates3D {
+        Coordinates3D::from(self.position_in_metres.get_coordinates())
+    }
+
+    pub fn set_position(&mut self, position: Coordinates3D) {
+        self.position_in_metres.set_coordinates(position.get_coordinates());
     }
 }
 
 
 #[derive(Clone)]
 pub struct Drone {
-    pub max_speed: f32,
-    pub global_position: Coordinates3D,
-    pub position: Coordinates3D,
-    pub velocity: Coordinates3D,
-    pub acceleration: Coordinates3D,
-    pub destination: Coordinates3D,
+    max_speed: f32,
+    _global_position_in_metres: Coordinates3D,
+    position_in_metres: Coordinates3D,
+    velocity_in_metresps: Coordinates3D,
+    // TODO acceleration_in_m2ps: Coordinates3D,
+    destination: Coordinates3D,
     // TODO infection_state
-    pub command_center: CommandCenter,
-    pub control_connection: bool,
-    pub gps_connection: bool,
+    command_center: CommandCenter,
+    control_connection: bool,
+    gps_connection: bool,
 }
 
 impl Drone {
     pub fn new(max_speed: f32,
-        position: &Coordinates3D,
-        destination: &Coordinates3D,
-        command_center: &CommandCenter) -> Drone {
+        position: Coordinates3D,
+        destination: Coordinates3D,
+        command_center: CommandCenter) -> Drone {
         Drone {
-            max_speed: max_speed,
-            global_position: position.clone(),
-            position: position.clone(),
-            velocity: Coordinates3D { x: 0.0, y: 0.0, z: 0.0 },
-            acceleration: Coordinates3D { x: 0.0, y: 0.0, z: 0.0 },
-            destination: destination.clone(),
-            command_center: command_center.clone(),
+            max_speed,
+            _global_position_in_metres: position.clone(),
+            position_in_metres: position,
+            velocity_in_metresps: Coordinates3D::new(0.0, 0.0, 0.0),
+            // TODO acceleration_in_m2ps: Coordinates3D::new(0.0, 0.0, 0.0),
+            destination,
+            command_center,
             control_connection: true,
             gps_connection: true,
         }
     }
 
-    pub fn set_destination(&mut self, destination: Option<&Coordinates3D>) {
+    pub fn set_destination(&mut self, destination: Option<Coordinates3D>) {
         match destination {
-            Some(coordinates) => {
-                self.destination.x = coordinates.x;
-                self.destination.y = coordinates.y;
-                self.destination.z = coordinates.z;
-            },
+            Some(coordinates) => self.destination.set_coordinates(
+                (coordinates.x, coordinates.y, coordinates.z)
+            ),
             None => (),
         }
 
-        self.velocity.x = self.destination.x - self.position.x;
-        self.velocity.y = self.destination.y - self.position.y;
-        self.velocity.z = self.destination.z - self.position.z;
+        let destination = self.destination.get_coordinates();
+        let current_position = self.position_in_metres.get_coordinates();
+
+        self.velocity_in_metresps.set_coordinates((
+            destination.0 - current_position.0,
+            destination.1 - current_position.1,
+            destination.2 - current_position.2
+        ));
         
-        self.velocity.truncate_vector_size(self.max_speed);
-        // TODO change acceleration
+        self.velocity_in_metresps.truncate_vector_size(self.max_speed);
+        // TODO change acceleration_in_m2ps
     }
     
     pub fn update_position(&mut self, time_in_millis: u64) {
         let time_in_secs = time_in_millis as f32 / 1000.0;
-
-        self.global_position.x += self.velocity.x * time_in_secs +
-            self.acceleration.x * time_in_secs.powf(2.0) / 2.0;
-        self.global_position.y += self.velocity.y * time_in_secs +
-            self.acceleration.y * time_in_secs.powf(2.0) / 2.0;
-        self.global_position.z += self.velocity.z * time_in_secs +
-            self.acceleration.z * time_in_secs.powf(2.0) / 2.0;
         
+
+        self._global_position_in_metres = _equation_of_motion_3d(
+            &self._global_position_in_metres,
+            &self.velocity_in_metresps,
+            time_in_secs
+        );        
+
         if self.gps_connection {
             self.set_destination(None);
 
-            self.position.x = self.global_position.x;
-            self.position.y = self.global_position.y;
-            self.position.z = self.global_position.z;
-            
+            self.position_in_metres.set_coordinates((
+                self._global_position_in_metres.x,
+                self._global_position_in_metres.y,
+                self._global_position_in_metres.z
+            ));
+
             self.reached_destination();
         }
         else {
-            self.velocity.z = 0.0;
-            self.acceleration.z = 0.0;
+            self.velocity_in_metresps.z = 0.0;
+            // TODO self.acceleration_in_m2ps.z = 0.0;
 
-            self.velocity.truncate_vector_size(self.max_speed);
-            // TODO truncate acceleration
+            self.velocity_in_metresps.truncate_vector_size(self.max_speed);
+            // TODO truncate acceleration_in_m2ps
         }
 
         self.gps_connection = true;
     }
 
     pub fn reached_destination(&mut self) {
-        let distance_to_destination = self.position.distance(&self.destination); 
+        let distance_to_destination = self.position_in_metres
+            .distance(&self.destination); 
         
         if distance_to_destination <= DESTINATION_RADIUS_IN_METRES {
             self.control_connection = false;
@@ -158,24 +210,19 @@ pub struct DroneNetwork {
 }
 
 impl DroneNetwork {
-    pub fn new(destination: &Coordinates3D, drones: &Vec<Drone>) -> DroneNetwork {
-        DroneNetwork {
-            destination: destination.clone(), 
-            drones: drones.to_vec(),
-        }
+    pub fn new(destination: Coordinates3D, drones: Vec<Drone>) -> DroneNetwork {
+        DroneNetwork { destination, drones }
     }
     pub fn set_destination(&mut self, destination: Option<&Coordinates3D>) {
         match destination {
-            Some(coordinates) => {
-                self.destination.x = coordinates.x;
-                self.destination.y = coordinates.y;
-                self.destination.z = coordinates.z;
-            },
+            Some(coordinates) => self.destination.set_coordinates(
+                    (coordinates.x, coordinates.y, coordinates.z)
+                ),
             None => (),
         }
         
         for drone in self.drones.iter_mut() {
-            drone.set_destination(destination);
+            drone.set_destination(destination.cloned());
         }
     }
 
@@ -201,33 +248,32 @@ pub enum SuppressionAreaType {
 }
 
 pub struct RadarWarfareDevice {
-    pub position: Coordinates3D,
-    pub frequency: SuppressionFrequencyType,
-    pub area: SuppressionAreaType,
+    position_in_metres: Coordinates3D,
+    frequency: SuppressionFrequencyType,
+    area: SuppressionAreaType,
 }
 
 impl RadarWarfareDevice {
-    pub fn new(position: &Coordinates3D,
+    pub fn new(position: Coordinates3D,
         frequency: SuppressionFrequencyType,
         area: SuppressionAreaType) -> RadarWarfareDevice {
-        RadarWarfareDevice {
-            position: position.clone(),
-            frequency: frequency,
-            area: area
+        RadarWarfareDevice { 
+            position_in_metres: position, 
+            frequency, 
+            area,
         }
     }
     
     pub fn in_area(&self, drone: &Drone) -> bool {
-        let drone_position = &drone.global_position;
+        let drone_position = &drone._global_position_in_metres;
 
         match self.area {
             SuppressionAreaType::Dome(radius) => {
-                let distance: f32 = 
-                    (drone_position.x - self.position.x).powf(2.0) +
-                    (drone_position.y - self.position.y).powf(2.0) +
-                    (drone_position.z - self.position.z).powf(2.0);
+                let distance: f32 = self.position_in_metres
+                    .point_vector_to(&drone_position)
+                    .size();
                 
-                if distance <= radius.powf(2.0) { 
+                if distance <= radius { 
                     true
                 }
                 else {
@@ -247,6 +293,7 @@ impl RadarWarfareDevice {
                     drone.control_connection = false;
                 }
             }
+            
             true
         }
         else {
@@ -263,7 +310,7 @@ impl RadarWarfareDevice {
         }
     }
 
-    pub fn _suppress_network_gps(&self, drone_network: &mut DroneNetwork) -> bool {
+    fn _suppress_network_gps(&self, drone_network: &mut DroneNetwork) -> bool {
         let mut suppressed = false;
 
         for drone in drone_network.drones.iter_mut() {
@@ -275,7 +322,7 @@ impl RadarWarfareDevice {
         suppressed
     }
 
-    pub fn _suppress_network_control(&self,
+    fn _suppress_network_control(&self,
         drone_network: &mut DroneNetwork) -> bool {
         let mut suppressed = false;
 
@@ -293,11 +340,11 @@ impl RadarWarfareDevice {
 
 
 pub struct World {
-    pub command_center: CommandCenter,
-    pub drone_network: DroneNetwork,
-    pub radar_warfare_devices: Vec<RadarWarfareDevice>,
-    pub current_time_in_millis: u64,
-    pub end_time_in_millis: u64,
+    command_center: CommandCenter,
+    drone_network: DroneNetwork,
+    radar_warfare_devices: Vec<RadarWarfareDevice>,
+    current_time_in_millis: u64,
+    end_time_in_millis: u64,
 }
 
 impl World {
@@ -342,33 +389,37 @@ impl World {
            let _ = chart.draw_series(
                 vec![self.drone_network.destination.clone()]
                     .iter()
-                    .map(|position| {
+                    .map(|position_in_metres| {
                         let point = (
-                            position.x as f64,
-                            position.z as f64,
-                            position.y as f64,
+                            position_in_metres.x as f64,
+                            position_in_metres.z as f64,
+                            position_in_metres.y as f64,
                         );
 
                         Circle::new(
                             point, 
-                            _convert_metres_to_pixels(DESTINATION_RADIUS_IN_METRES), 
+                            _convert_metres_to_pixels(
+                                DESTINATION_RADIUS_IN_METRES
+                            ), 
                             &YELLOW)
                     }),
             );
             
             let _ = chart.draw_series(
-                vec![self.command_center.position.clone()]
+                vec![self.command_center.position_in_metres.clone()]
                     .iter()
-                    .map(|position| {
+                    .map(|position_in_metres| {
                         let point = (
-                            position.x as f64,
-                            position.z as f64,
-                            position.y as f64,
+                            position_in_metres.x as f64,
+                            position_in_metres.z as f64,
+                            position_in_metres.y as f64,
                         );
 
                         Circle::new(
                             point, 
-                            _convert_metres_to_pixels(DESTINATION_RADIUS_IN_METRES),  
+                            _convert_metres_to_pixels(
+                                DESTINATION_RADIUS_IN_METRES
+                            ),  
                             &GREEN)
                     }),
             );
@@ -378,9 +429,9 @@ impl World {
                     .iter()
                     .map(|drone| {
                         let point = (
-                            drone.global_position.x as f64,
-                            drone.global_position.z as f64,
-                            drone.global_position.y as f64,
+                            drone._global_position_in_metres.x as f64,
+                            drone._global_position_in_metres.z as f64,
+                            drone._global_position_in_metres.y as f64,
                         );
 
                         Circle::new(point, 1, &BLACK)
@@ -392,9 +443,9 @@ impl World {
                     .iter()
                     .map(|rwd| {
                         let point = (
-                            rwd.position.x as f64,
-                            rwd.position.z as f64,
-                            rwd.position.y as f64,
+                            rwd.position_in_metres.x as f64,
+                            rwd.position_in_metres.z as f64,
+                            rwd.position_in_metres.y as f64,
                         );
 
                         let rwd_coverage = match rwd.area {
@@ -417,7 +468,6 @@ impl World {
             self.current_time_in_millis += STEP_DURATION_IN_MILLIS;
         }
     }
-
 }
 
 
