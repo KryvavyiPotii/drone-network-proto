@@ -8,7 +8,7 @@ pub mod constants;
 
 fn main() {
     let command_center = CommandCenter::new(
-        Coordinates3D::from(INITIAL_COMMAND_CENTER_POSITION)
+        Coordinates3D::from(INITIAL_COMMAND_CENTER_POSITION),
     );
     
     let mut drones: Vec<Drone> = Vec::new();
@@ -21,7 +21,7 @@ fn main() {
         let position = Coordinates3D::new(
             INITIAL_DRONE_POSITION.0 + random_x_offset,
             INITIAL_DRONE_POSITION.1 + random_y_offset,
-            INITIAL_DRONE_POSITION.2 + random_z_offset
+            INITIAL_DRONE_POSITION.2 + random_z_offset,
         );
 
         drones.push(
@@ -29,12 +29,12 @@ fn main() {
                 MAX_SPEED_IN_METRES_PER_S, 
                 position, 
                 Coordinates3D::from(INITIAL_DRONE_DESTINATION), 
-                command_center.clone()
             )
         );
     }
 
-    let drone_network = DroneNetwork::new(
+    let drone_swarm = DroneSwarm::new(
+        command_center.clone(),
         Coordinates3D::from(INITIAL_DRONE_DESTINATION), 
         drones
     );
@@ -58,7 +58,7 @@ fn main() {
     
     let mut world = World::new(
         command_center,
-        drone_network,
+        drone_swarm,
         radar_warfare_devices,
         0,
         MAX_TIME_IN_MILLIS
