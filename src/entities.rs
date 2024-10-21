@@ -1,15 +1,64 @@
-use plotters::prelude::*;
 use crate::constants::*;
-use std::hash::Hash;
+use plotters::prelude::*;
 use petgraph::graphmap::UnGraphMap;
+use rand::{thread_rng, Rng};
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::cmp::Ordering;
 
-// TODO acceleration
+
+pub trait Position {
+    fn get_position(&self) -> Coordinates3D;
+    fn set_position(&mut self, position: Coordinates3D);
+    fn distance_to<U: Position>(&self, other: &U) -> f32 {
+        self.get_position().point_vector_to(&other.get_position()).size()
+    }
+}
+
+
+#[derive(Clone, Copy)]
+pub enum SignalFrequencyType {
+    GPS,
+    Control,
+}
+
+#[derive(Clone, Copy)]
+pub enum SignalAreaType {
+    Dome(f32),
+    // TODO Rifle,
+}
+
+#[derive(Clone, Copy)]
+pub enum SignalLevel {
+    Green,
+    Yellow,
+    Red,
+    Black,
+}
+
+#[derive(Clone, Copy)]
+pub enum MessageType {
+    SetDestination(u32, Option<Coordinates3D>),
+}
+
+#[derive(Clone)]
+pub enum DroneNetworkType {
+    ComplexNetwork(ComplexNetwork),
+    // TODO CellularAutomata,
+}
+
+
+fn _generate_drone_id() -> u32 {
+    let mut rng = thread_rng();
+
+    rng.gen_range(0..ID_RANGE)
+}
+
 fn _equation_of_motion_1d(start_position: f32, velocity: f32,
     time_in_secs: f32) -> f32 {
     start_position + velocity * time_in_secs
 }
 
-// TODO acceleration
 fn _equation_of_motion_3d(start_position: &Coordinates3D,
     velocity: &Coordinates3D, time_in_secs: f32) -> Coordinates3D {
     Coordinates3D::new(
@@ -19,7 +68,8 @@ fn _equation_of_motion_3d(start_position: &Coordinates3D,
     )
 }
 
-#[derive(Clone)]
+
+#[derive(Copy, Clone, Debug)]
 pub struct Coordinates3D { 
     x: f32, 
     y: f32, 
@@ -65,10 +115,6 @@ impl Coordinates3D {
             other.z - self.z
         )
     }
-
-    pub fn distance(&self, other: &Coordinates3D) -> f32 {
-        self.point_vector_to(other).size() 
-    }
 }
 
 impl From<(f32, f32, f32)> for Coordinates3D {
@@ -77,206 +123,381 @@ impl From<(f32, f32, f32)> for Coordinates3D {
     }
 }
 
+impl Position for Coordinates3D {
+    fn get_position(&self) -> Self {
+        *self
+    }
+
+    fn set_position(&mut self, position: Self) {
+        *self = position;    
+    }
+}
+
 
 #[derive(Clone)]
 pub struct CommandCenter {
+    id: u32,
+    current_time_in_millis: u32,
     position_in_metres: Coordinates3D,
+    area: SignalAreaType,
+    drone_network: DroneNetworkType, 
 }
 
 impl CommandCenter {
-    pub fn new(position: Coordinates3D) -> Self {
-        CommandCenter { position_in_metres: position }
+    pub fn new(position: Coordinates3D, area: SignalAreaType,
+        mut drone_network: DroneNetworkType) -> Self {
+        let id = _generate_drone_id();
+
+        drone_network.connect_command_center(id);
+
+        CommandCenter {
+            id,
+            current_time_in_millis: 0,
+            position_in_metres: position,
+            area,
+            drone_network,
+        }
     }
     
-    pub fn get_position(&self) -> Coordinates3D {
-        Coordinates3D::from(self.position_in_metres.get_coordinates())
+    pub fn get_id(&self) -> u32 {
+        self.id
     }
 
-    pub fn set_position(&mut self, position: Coordinates3D) {
-        self.position_in_metres.set_coordinates(position.get_coordinates());
+    pub fn set_time(&mut self, time_in_millis: u32) {
+        self.current_time_in_millis = time_in_millis;
+    }
+
+    pub fn set_destination(&mut self, destination: Option<Coordinates3D>) {
+        self.drone_network.add_message(
+            MessageType::SetDestination(
+                self.current_time_in_millis,
+                destination
+            )
+        );
+    }
+
+    pub fn update_state(&mut self) {
+        self.drone_network.update_state();
+    }
+}
+
+impl PartialEq for CommandCenter {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Hash for CommandCenter {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl Position for CommandCenter {
+    fn get_position(&self) -> Coordinates3D {
+        self.position_in_metres
+    }
+
+    fn set_position(&mut self, position: Coordinates3D) {
+        self.position_in_metres = position;
     }
 }
 
 
-pub enum SignalLevel {
-    Green,
-    Yellow,
-    Red,
-    Black,
-}
-
-
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Drone {
-    max_speed: f32,
+    id: u32,
+    max_speed_in_metresps: f32,
     _global_position_in_metres: Coordinates3D,
     position_in_metres: Coordinates3D,
     velocity_in_metresps: Coordinates3D,
-    // TODO acceleration_in_m2ps: Coordinates3D,
-    destination: Coordinates3D,
+    destination_in_metres: Coordinates3D,
     // TODO infection_state
-    command_center: Option<CommandCenter>,
+    command_center_id: u32,
     control_connection: bool,
     gps_connection: bool,
 }
 
 impl Drone {
-    pub fn new(max_speed: f32, position: Coordinates3D,
-        destination: Coordinates3D) -> Self {
+    pub fn new(position: Coordinates3D) -> Self {
         Drone {
-            max_speed,
+            id: _generate_drone_id(),
+            max_speed_in_metresps: MAX_DRONE_SPEED_IN_METRES_PER_S,
             _global_position_in_metres: position.clone(),
             position_in_metres: position,
             velocity_in_metresps: Coordinates3D::new(0.0, 0.0, 0.0),
-            // TODO acceleration_in_m2ps: Coordinates3D::new(0.0, 0.0, 0.0),
-            destination,
-            command_center: None,
+            destination_in_metres: Coordinates3D::new(0.0, 0.0, 0.0),
+            command_center_id: 0,
             control_connection: true,
             gps_connection: true,
         }
     }
 
-    pub fn connect_command_center(&mut self, command_center: CommandCenter) {
-        self.command_center = Some(command_center);
+    pub fn get_id(&self) -> u32 {
+        self.id
     }
 
-    pub fn set_destination(&mut self, destination: Option<Coordinates3D>) {
-        match destination {
-            Some(coordinates) => self.destination.set_coordinates(
-                (coordinates.x, coordinates.y, coordinates.z)
-            ),
-            None => (),
-        }
+    pub fn connect_command_center(&mut self, command_center_id: u32) {
+        self.command_center_id = command_center_id;
+    }
 
-        let destination = self.destination.get_coordinates();
-        let current_position = self.position_in_metres.get_coordinates();
-
-        self.velocity_in_metresps.set_coordinates((
-            destination.0 - current_position.0,
-            destination.1 - current_position.1,
-            destination.2 - current_position.2
-        ));
-        
-        self.velocity_in_metresps.truncate_vector_size(self.max_speed);
-        // TODO change acceleration_in_m2ps
+    pub fn process_message(&mut self, message: &MessageType) {
+        match message {
+            MessageType::SetDestination(_, destination) => {
+                self._set_destination(*destination);
+            },
+        };
     }
     
-    pub fn update_position(&mut self, time_in_millis: u64) {
-        let time_in_secs = time_in_millis as f32 / 1000.0;
-        
+    fn _set_destination(&mut self, destination: Option<Coordinates3D>) {
+        if let Some(coordinates) = destination {
+            self.destination_in_metres = coordinates;
+        }
 
+        self.velocity_in_metresps = self.position_in_metres.point_vector_to(
+            &self.destination_in_metres
+        );
+        
+        self.velocity_in_metresps.truncate_vector_size(
+            self.max_speed_in_metresps
+        );
+    }
+    
+    pub fn update_state(&mut self) {
+        let time_in_secs = STEP_DURATION_IN_MILLIS as f32 / 1000.0;
+        
         self._global_position_in_metres = _equation_of_motion_3d(
             &self._global_position_in_metres,
             &self.velocity_in_metresps,
-            time_in_secs
+            time_in_secs,
         );        
 
         if self.gps_connection {
-            self.set_destination(None);
-
-            self.position_in_metres.set_coordinates((
-                self._global_position_in_metres.x,
-                self._global_position_in_metres.y,
-                self._global_position_in_metres.z
-            ));
-
+            self._set_destination(None);
+            self.position_in_metres = self._global_position_in_metres;
             self.reached_destination();
         }
         else {
             self.velocity_in_metresps.z = 0.0;
-            // TODO self.acceleration_in_m2ps.z = 0.0;
-
-            self.velocity_in_metresps.truncate_vector_size(self.max_speed);
-            // TODO truncate acceleration_in_m2ps
+            self.velocity_in_metresps.truncate_vector_size(
+                self.max_speed_in_metresps
+            );
         }
-
+        
+        // Try to establish GPS connection.
         self.gps_connection = true;
     }
 
     pub fn reached_destination(&mut self) {
-        let distance_to_destination = self.position_in_metres
-            .distance(&self.destination); 
+        let distance = self.distance_to(&self.destination_in_metres);
         
-        if distance_to_destination <= DESTINATION_RADIUS_IN_METRES {
+        if distance <= DESTINATION_RADIUS_IN_METRES {
             self.control_connection = false;
         }
     }
 }
 
+impl Ord for Drone {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let self_distance = self.distance_to(&self.destination_in_metres);
+        
+        let other_distance = other.distance_to(&other.destination_in_metres);
 
-pub struct DroneSwarm {
-    command_center: CommandCenter,
-    destination: Coordinates3D,
-    drones: Vec<Drone>,
-    // TODO cellular automata implementation
+        self_distance.partial_cmp(&other_distance)
+            .expect("Failed to compare f32 values")
+    }
 }
 
-impl DroneSwarm {
-    pub fn new(command_center: CommandCenter, destination: Coordinates3D,
-        mut drones: Vec<Drone>) -> Self {
-        drones.iter_mut()
-            .for_each(|drone| {
-                drone.connect_command_center(command_center.clone())
-            });
-        
-        DroneSwarm { command_center, destination, drones }
+impl PartialOrd for Drone {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for Drone {}
+
+impl PartialEq for Drone {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Hash for Drone {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl Position for Drone {
+    fn get_position(&self) -> Coordinates3D {
+        self.position_in_metres
     }
 
-    pub fn connect_command_center(&mut self,
-        command_center: Option<CommandCenter>) {
-        match command_center {
-            Some(cc) => self.command_center = cc,
-            None => (),
-        };
-        
-        self.drones.iter_mut()
-            .for_each(|drone| {
-                drone.connect_command_center(self.command_center.clone())
-            });
+    fn set_position(&mut self, point: Coordinates3D) {
+        self.position_in_metres = point;
     }
+}
 
-    pub fn set_destination(&mut self, destination: Option<&Coordinates3D>) {
-        match destination {
-            Some(coordinates) => self.destination.set_coordinates(
-                    (coordinates.x, coordinates.y, coordinates.z)
-                ),
-            None => (),
+
+impl DroneNetworkType {
+    pub fn connect_command_center(&mut self, command_center_id: u32) {
+        match self {
+            Self::ComplexNetwork(complex_network) => 
+                complex_network.connect_command_center(command_center_id),
         }
+    }
+    
+    pub fn add_message(&mut self, message: MessageType) {
+        match self {
+            Self::ComplexNetwork(complex_network) => 
+                complex_network.add_message(message),
+        } 
+    }
+
+    pub fn update_state(&mut self) {
+        match self {
+            Self::ComplexNetwork(complex_network) => 
+                complex_network.update_state(),
+        }
+    }
+    
+    pub fn add_drone(&mut self, drone: Drone) {
+        match self {
+            Self::ComplexNetwork(complex_network) => 
+                complex_network.add_drone(drone),
+        }
+    }
+
+    pub fn remove_uncontrolled_drones(&mut self) {
+        match self {
+            Self::ComplexNetwork(complex_network) => 
+                complex_network.remove_uncontrolled_drones(),
+        }
+    }
+}
+
+
+#[derive(Clone)]
+pub struct ComplexNetwork {
+    current_time_in_millis: u32,
+    destination_in_metres: Coordinates3D,
+    drones: Vec<Drone>,
+    connections: UnGraphMap<u32, f32>,
+    delays: HashMap<u32, u32>,
+    message_queue: VecDeque<MessageType>,
+}
+
+impl ComplexNetwork {
+    pub fn new(drones: Vec<Drone>) -> Self {
+        ComplexNetwork {
+            current_time_in_millis: 0,
+            destination_in_metres: Coordinates3D::new(0.0, 0.0, 0.0),
+            drones,
+            connections: UnGraphMap::new(),
+            delays: HashMap::new(),
+            message_queue: VecDeque::new(),
+        }
+    }
+    
+    pub fn set_time(&mut self, time_in_millis: u32) {
+        self.current_time_in_millis = time_in_millis;
+    }
+
+    pub fn set_destination(&mut self, destination: Coordinates3D) {
+        self.destination_in_metres = destination;
+    }
+
+    pub fn connect_command_center(&mut self, command_center_id: u32) {
+        self.drones.iter_mut()
+            .for_each(|drone| drone.connect_command_center(command_center_id));
+    }
+
+    pub fn add_message(&mut self, message: MessageType) {
+        match message {
+            MessageType::SetDestination(_, destination) =>
+                if let Some(coordinates) = destination { 
+                    self.set_destination(coordinates);
+                },
+        }
+
+        self.message_queue.push_back(message);
+    }
+
+    fn _process_message_queue(&mut self) {
+        // TODO add delays
+        for message in self.message_queue.iter() {
+            self.drones.iter_mut()
+                .for_each(|drone| drone.process_message(message));
+        }
+
+        self.message_queue.clear();
+    }
+
+    pub fn update_state(&mut self) {
+        self._update_connections();
+        self._process_message_queue();
         
         self.drones.iter_mut()
-            .for_each(|drone| drone.set_destination(destination.cloned()));
+            .for_each(|drone| drone.update_state());
     }
 
-    pub fn update_position(&mut self, time_in_millis: u64) {
-        self.drones.iter_mut()
-            .for_each(|drone| drone.update_position(time_in_millis)); 
+    fn _update_connections(&mut self) {
+        self.connections.clear();
+
+        for (i, drone1) in self.drones.iter().enumerate() {
+            let node1 = self.connections.add_node(drone1.id);
+
+            for drone2 in self.drones.iter().skip(i + 1) {
+                let node2 = self.connections.add_node(drone2.id);
+                let distance = drone1.distance_to(drone2);
+
+                self.connections.add_edge(node1, node2, distance);
+                // TODO self.delays.insert(drone, );
+            }
+        }
     }
 
-    pub fn disconnect_uncontrolled_drones(&mut self) {
+    pub fn add_drone(&mut self, drone: Drone) {
+        self.drones.push(drone);
+        
+        self._update_connections(); 
+    }
+
+    pub fn remove_drone(&mut self, drone_id: u32) {
+        self.disconnect_drone(drone_id);
+
+        let index = self.drones.iter().position(|drone| drone.id == drone_id)
+            .expect("Failed to remove drone");
+        self.drones.remove(index);
+
+        self._update_connections()
+    }
+
+    pub fn disconnect_drone(&mut self, drone_id: u32) {
+        self.connections.remove_node(drone_id);
+    }
+    
+    pub fn remove_uncontrolled_drones(&mut self) {
         self.drones.retain(|drone| drone.control_connection);
+    
+        self._update_connections();
     }
 }
 
-pub enum SuppressionFrequencyType {
-    GPS,
-    Control
-}
 
-pub enum SuppressionAreaType {
-    Dome(f32)
-    // TODO Rifle
-}
-
+#[derive(Clone, Copy)]
 pub struct RadarWarfareDevice {
+    id: u32,
     position_in_metres: Coordinates3D,
-    frequency: SuppressionFrequencyType,
-    area: SuppressionAreaType,
+    frequency: SignalFrequencyType,
+    area: SignalAreaType,
 }
 
 impl RadarWarfareDevice {
-    pub fn new(position: Coordinates3D, frequency: SuppressionFrequencyType,
-        area: SuppressionAreaType) -> Self {
+    pub fn new(position: Coordinates3D, frequency: SignalFrequencyType,
+        area: SignalAreaType) -> Self {
         RadarWarfareDevice { 
+            id: _generate_drone_id(),
             position_in_metres: position, 
             frequency, 
             area,
@@ -284,13 +505,11 @@ impl RadarWarfareDevice {
     }
     
     pub fn in_area(&self, drone: &Drone) -> bool {
-        let drone_position = &drone._global_position_in_metres;
-
         match self.area {
-            SuppressionAreaType::Dome(radius) => {
-                let distance: f32 = self.position_in_metres
-                    .point_vector_to(&drone_position)
-                    .size();
+            SignalAreaType::Dome(radius) => {
+                let distance = self.position_in_metres.distance_to(
+                    &drone._global_position_in_metres
+                );
                 
                 distance <= radius
             }
@@ -303,63 +522,90 @@ impl RadarWarfareDevice {
         }
         
         match self.frequency {
-            SuppressionFrequencyType::GPS => drone.gps_connection = false,
-            SuppressionFrequencyType::Control => 
+            SignalFrequencyType::GPS => drone.gps_connection = false,
+            SignalFrequencyType::Control => 
                 drone.control_connection = false,
         }
-        
+
         true
     }
 
-    pub fn suppress_swarm(&self, drone_swarm: &mut DroneSwarm) -> bool {
+    pub fn suppress_network(&self, drone_network: &mut DroneNetworkType) -> bool {
         match self.frequency {
-            SuppressionFrequencyType::GPS =>
-                self._suppress_swarm_gps(drone_swarm),
-            SuppressionFrequencyType::Control =>
-                self._suppress_swarm_control(drone_swarm),
+            SignalFrequencyType::GPS =>
+                self._suppress_network_gps(drone_network),
+            SignalFrequencyType::Control =>
+                self._suppress_network_control(drone_network),
         }
     }
 
-    fn _suppress_swarm_gps(&self, drone_swarm: &mut DroneSwarm) -> bool {
+    fn _suppress_network_gps(&self, drone_network: &mut DroneNetworkType) -> bool {
         let mut suppressed = false;
 
-        drone_swarm.drones.iter_mut()
-            .for_each(|drone| if self.suppress(drone) { suppressed = true; });
+        match drone_network {
+            DroneNetworkType::ComplexNetwork(complex_network) => {
+                complex_network.drones.iter_mut()
+                    // TODO remove extra if checks
+                    .for_each(|drone| if self.suppress(drone) {
+                        suppressed = true;
+                    });
+            },
+        }
 
         suppressed
     }
 
-    fn _suppress_swarm_control(&self, drone_swarm: &mut DroneSwarm) -> bool {
+    fn _suppress_network_control(&self, drone_network: &mut DroneNetworkType)
+        -> bool {
         let mut suppressed = false;
 
-        drone_swarm.drones.iter_mut()
-            .for_each(|drone| if self.suppress(drone) { suppressed = true; });
+        match drone_network {
+            DroneNetworkType::ComplexNetwork(complex_network) => {
+                complex_network.drones.iter_mut()
+                    // TODO remove extra if checks
+                    .for_each(|drone| if self.suppress(drone) {
+                        suppressed = true;
+                    });
+                
+                complex_network.remove_uncontrolled_drones();
+            },
+        }
 
-        drone_swarm.disconnect_uncontrolled_drones();
-        
         suppressed
     }
 }
 
+impl Hash for RadarWarfareDevice {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl Position for RadarWarfareDevice {
+    fn get_position(&self) -> Coordinates3D {
+        self.position_in_metres
+    }
+
+    fn set_position(&mut self, point: Coordinates3D) {
+        self.position_in_metres = point;
+    }
+}
 
 pub struct World {
-    command_center: CommandCenter,
-    drone_swarm: DroneSwarm,
-    radar_warfare_devices: Vec<RadarWarfareDevice>,
     current_time_in_millis: u64,
     end_time_in_millis: u64,
+    command_center: CommandCenter,
+    radar_warfare_devices: Vec<RadarWarfareDevice>,
 }
 
 impl World {
-    pub fn new(command_center: CommandCenter, drone_swarm: DroneSwarm,
-        radar_warfare_devices: Vec<RadarWarfareDevice>,
-        current_time_in_millis: u64, end_time_in_millis: u64) -> Self {
+    pub fn new(current_time: u64, end_time: u64, command_center: CommandCenter,
+        radar_warfare_devices: Vec<RadarWarfareDevice>) -> Self {
         World {
+            current_time_in_millis: current_time,
+            end_time_in_millis: end_time,
             command_center,
-            drone_swarm,
             radar_warfare_devices,
-            current_time_in_millis,
-            end_time_in_millis,
         }
     }
 
@@ -370,15 +616,21 @@ impl World {
             STEP_DURATION_IN_MILLIS as u32
         ).unwrap().into_drawing_area();
 
-        self.drone_swarm.set_destination(None);
+        self.command_center.set_destination(
+            Some(Coordinates3D::from(INITIAL_DRONE_DESTINATION))
+        );
 
         while self.current_time_in_millis < self.end_time_in_millis {
             area.fill(&WHITE).unwrap();
     
-            self.drone_swarm.update_position(STEP_DURATION_IN_MILLIS);
+            self.command_center.update_state();
                                 
             self.radar_warfare_devices.iter()
-                .for_each(|rwd| { rwd.suppress_swarm(&mut self.drone_swarm); });
+                .for_each(|rwd| {
+                    rwd.suppress_network(
+                        &mut self.command_center.drone_network
+                    );
+                });
             
             let mut chart = ChartBuilder::on(&area)
                 .margin(20)
@@ -387,8 +639,13 @@ impl World {
                 .unwrap();
             chart.configure_axes().draw().unwrap();
 
-           let _ = chart.draw_series(
-                vec![self.drone_swarm.destination.clone()]
+            let destination = match &self.command_center.drone_network {
+                DroneNetworkType::ComplexNetwork(complex_network) =>
+                    complex_network.destination_in_metres
+            };
+
+            let _ = chart.draw_series(
+                vec![destination]
                     .iter()
                     .map(|position_in_metres| {
                         let point = (
@@ -426,17 +683,22 @@ impl World {
             );
 
             chart.draw_series(
-                self.drone_swarm.drones
-                    .iter()
-                    .map(|drone| {
-                        let point = (
-                            drone._global_position_in_metres.x as f64,
-                            drone._global_position_in_metres.z as f64,
-                            drone._global_position_in_metres.y as f64,
-                        );
+                match &self.command_center.drone_network { 
+                    DroneNetworkType::ComplexNetwork(complex_network) => {
+                        complex_network.drones
+                            .iter()
+                            .map(|drone| {
+                                let point = (
+                                    drone._global_position_in_metres.x as f64,
+                                    drone._global_position_in_metres.z as f64,
+                                    //drone._global_position_in_metres.y as f64,
+                                    0.0,
+                                );
 
-                        Circle::new(point, 1, &BLACK)
-                    }),
+                                Circle::new(point, 1, &BLACK)
+                            })
+                    },
+                }
             ).unwrap();
 
             chart.draw_series(
@@ -450,13 +712,13 @@ impl World {
                         );
 
                         let rwd_coverage = match rwd.area {
-                            SuppressionAreaType::Dome(radius_in_metres) =>
+                            SignalAreaType::Dome(radius_in_metres) =>
                                 _convert_metres_to_pixels(radius_in_metres)
                         };
 
                         let area_color = match rwd.frequency {
-                            SuppressionFrequencyType::GPS => &RED,
-                            SuppressionFrequencyType::Control => &BLUE
+                            SignalFrequencyType::GPS => &RED,
+                            SignalFrequencyType::Control => &BLUE
                         };
 
                         Circle::new(point, rwd_coverage, area_color)
