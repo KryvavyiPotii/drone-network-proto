@@ -23,9 +23,9 @@ fn main() {
         drones.push(Drone::new(position));
     }
 
-    let complex_network = ComplexNetwork::new(drones);
-    
-    let drone_network = DroneNetworkType::ComplexNetwork(complex_network);
+    let drone_network = DroneNetworkType::ComplexNetwork(
+        ComplexNetwork::new(drones)
+    );
 
     let command_center = CommandCenter::new(
         Coordinates3D::from(INITIAL_COMMAND_CENTER_POSITION),

@@ -11,4 +11,4 @@
 
 ![alt text](https://github.com/KryvavyiPotii/drone-network/blob/main/examples/simulation_gps_control.gif)
 ![alt text](https://github.com/KryvavyiPotii/drone-network/blob/main/examples/simulation_gps_only.gif)
-
+![alt text](https://github.com/KryvavyiPotii/drone-network/blob/main/examples/simulation_command_delay.gif)

@@ -1,11 +1,11 @@
 // TODO pub const MAX_HEIGHT_IN_METRES: f32           = 50.0;
 pub const MAX_DRONE_SPEED_IN_METRES_PER_S: f32      = 25.0;
 pub const DRONE_MAX_BROADCAST_RADIUS_IN_METRES: f32 = 10.0;
-pub const MAX_SIGNAL_SPEED_IN_METRES_PER_S: f32     = 200.0;
+pub const SIGNAL_SPEED_IN_METRES_PER_S: f32         = 0.00015;
 pub const ID_RANGE: u32                             = 100000;
 
 pub const MAX_TIME_IN_MILLIS: u64      = 15000;
-pub const STEP_DURATION_IN_MILLIS: u64 = 100;
+pub const STEP_DURATION_IN_MILLIS: u64 = 50;
 
 pub const CC_CONTROL_RADIUS_IN_METRES: f32  = 200.0;
 pub const RWD_CONTROL_RADIUS_IN_METRES: f32 = 25.0;
