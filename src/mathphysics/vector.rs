@@ -14,14 +14,17 @@ pub struct Vector3D {
 }
 
 impl Vector3D {
+    #[must_use]
     pub fn new(initial_point: Point3D, terminal_point: Point3D) -> Self {
         Self { initial_point, terminal_point }
     }
 
+    #[must_use]
     pub fn displacement(&self) -> Point3D {
         self.terminal_point - self.initial_point
     }
 
+    #[must_use]
     pub fn size(&self) -> f32 {
         let displacement = self.displacement();
         

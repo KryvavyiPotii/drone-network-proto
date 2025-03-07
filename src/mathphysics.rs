@@ -1,5 +1,3 @@
-use std::f32::NAN;
-
 pub use point::Point3D;
 pub use vector::Vector3D;
 pub use unit::*;
@@ -10,9 +8,12 @@ pub mod vector;
 pub mod unit;
 
 
-pub const INVALID_POSITION: Point3D = Point3D { x: NAN, y: NAN, z: NAN};
+pub const INVALID_POSITION: Point3D = Point3D { 
+    x: f32::NAN, y: f32::NAN, z: f32::NAN
+};
 
 
+#[must_use]
 pub fn equation_of_motion_1d(
     start_position: f32,
     velocity: f32,
@@ -21,6 +22,7 @@ pub fn equation_of_motion_1d(
     velocity.mul_add(time_in_secs, start_position)
 }
 
+#[must_use]
 pub fn equation_of_motion_3d(
     start_position: &Point3D,
     velocity: &Point3D,
@@ -43,6 +45,9 @@ pub trait Position {
         vector.size()
     }
 
+    /// # Panics
+    ///
+    /// Will panic if distances are not comparable.
     fn cmp_by_distance_to<P: Position>(
         &self, 
         other: &P, 
@@ -54,5 +59,39 @@ pub trait Position {
         distance_x
             .partial_cmp(&distance_y)
             .expect("Failed to compare f32 values")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ORIGIN: Point3D = Point3D { x: 0.0, y: 0.0, z: 0.0 };
+
+    #[test]
+    fn distance_to_another_point() {
+        let some_point = Point3D::new(5.0, 0.0, 0.0);
+
+        assert_eq!(0.0, ORIGIN.distance_to(&ORIGIN));
+        assert_eq!(5.0, ORIGIN.distance_to(&some_point));
+    }
+
+    #[test]
+    fn comparison_by_distance() {
+        let point_a = Point3D::new(5.0, 0.0, 0.0);
+        let point_b = Point3D::new(0.0, -5.0, 0.0);
+
+        assert_eq!(
+            7.0,
+            point_a.distance_to(&point_b).round()
+        );
+        assert_eq!(
+            ORIGIN.distance_to(&point_a),
+            point_a.distance_to(&ORIGIN)
+        );
+        assert_eq!(
+            ORIGIN.distance_to(&point_a),
+            point_b.distance_to(&ORIGIN)
+        );
     }
 }

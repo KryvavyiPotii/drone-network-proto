@@ -1,6 +1,8 @@
 # drone-network
 
-## Examples
+A trait that aims to model a network of drones.
+
+## Render legend
 
 * Green zone - command center.
 * Yellow zone - destination position.

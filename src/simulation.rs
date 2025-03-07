@@ -3,17 +3,24 @@ use std::{
     sync::{Arc, atomic::{AtomicBool, Ordering}}
 };
 
+use full_palette::GREY;
 use log::{info, trace};
-use modules::Receiver;
 use plotters::{
     coord::{ranged3d::Cartesian3d, types::RangedCoordf64, Shift}, 
     prelude::*,
     style::RGBColor
 };
+use thiserror::Error;
 
-use crate::communication::signal::*;
-use crate::device::{*, networkmodel::*};
-use crate::mathphysics::*;
+use crate::communication::{
+    GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
+};
+use crate::device::{
+    CommandCenter, DESTINATION_RADIUS, Drone, ElectronicWarfare, STEP_DURATION, 
+    Transceiver, Transmitter, 
+    networkmodel::{NetworkModel, get_drone_networks_destinations}
+};
+use crate::mathphysics::{Megahertz, Meter, Millisecond, Point3D, Position};
 
 
 pub const START_TIME: Millisecond = 0;
@@ -43,13 +50,13 @@ fn log_drone_count(drone_networks: &[NetworkModel]) -> String {
     let mut output = String::new();
 
     for (i, network) in drone_networks.iter().enumerate() {
-        let entry = format!("Drone count {}: {},", i, network.drone_count());
+        let entry = format!("Drone count {}: {}, ", i, network.drone_count());
         
         output.push_str(&entry); 
     }
 
-    // Remove a trailing comma.
-    output.truncate(output.len() - 1);
+    // Remove trailing comma and space.
+    output.truncate(output.len() - 2);
 
     output
 }
@@ -62,7 +69,7 @@ fn get_destination_primitive(
     destination: &Point3D,
     screen_height: u32,
 ) -> Circle<(f64, f64, f64), u32> {
-    let point = plotters_point_from_point3d(&destination);
+    let point = plotters_point_from_point3d(destination);
     let radius = convert_meters_to_pixels(
         DESTINATION_RADIUS,
         screen_height
@@ -86,7 +93,7 @@ fn get_command_center_primitive(
 
 fn get_drone_primitive(
     drone: &Drone,
-    coloring: &DroneColoring
+    coloring: DroneColoring
 ) -> Circle<(f64, f64, f64), u32> {
     let point = plotters_point_from_point3d(drone.position());
     let color = get_drone_color(drone, coloring);
@@ -94,28 +101,33 @@ fn get_drone_primitive(
     Circle::new(point, 1, color)
 }
 
-fn get_rwd_primitive(
-    rwd: &RWDType,
-    signal_type: &SignalType,
+fn get_ewd_primitive(
+    ewd: &ElectronicWarfare,
+    frequency: Megahertz,
     screen_height: u32
 ) -> Circle<(f64, f64, f64), u32> {
-    let point = plotters_point_from_point3d(rwd.position());
-    let rwd_coverage = convert_meters_to_pixels(
-        rwd
-            .area(signal_type)
+    let point = plotters_point_from_point3d(ewd.position());
+    let ewd_coverage = convert_meters_to_pixels(
+        ewd
+            .area(frequency)
             .radius(), 
         screen_height
     );
-    let area_color = match signal_type {
-        SignalType::GPS => RED,
-        SignalType::Control => BLUE
+    let area_color = match frequency {
+        GPS_L1_FREQUENCY | GPS_L2_FREQUENCY => RED,
+        WIFI_2_4GHZ_FREQUENCY => BLUE,
+        _ => GREY
     };
 
-    Circle::new(point, rwd_coverage, area_color)
+    Circle::new(point, ewd_coverage, area_color)
 }
 
 fn plotters_point_from_point3d(point: &Point3D) -> (f64, f64, f64) {
-    (point.x as f64, point.z as f64, point.y as f64,)
+    (    
+        f64::from(point.x), 
+        f64::from(point.z), 
+        f64::from(point.y), 
+    )
 }
 
 fn convert_meters_to_pixels(
@@ -129,10 +141,10 @@ fn convert_meters_to_pixels(
     (value * coef) as u32 
 }
 
-fn get_drone_color(drone: &Drone, coloring: &DroneColoring) -> RGBColor {
+fn get_drone_color(drone: &Drone, coloring: DroneColoring) -> RGBColor {
     match coloring {
         DroneColoring::Signal => {
-            let signal_level = drone.rx_signal_level(&SignalType::Control);
+            let signal_level = drone.rx_signal_level(WIFI_2_4GHZ_FREQUENCY);
 
             if signal_level.is_green() {
                 GREEN
@@ -145,9 +157,15 @@ fn get_drone_color(drone: &Drone, coloring: &DroneColoring) -> RGBColor {
             }
         },
         DroneColoring::SingleColor(r, g, b) => {
-            RGBColor(*r, *g, *b)
+            RGBColor(r, g, b)
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum DrawError {
+    #[error("Color count does not match network count")]
+    NotMatchingColorNumber
 }
 
 
@@ -158,6 +176,7 @@ pub enum DroneColoring {
 }
 
 
+#[derive(Debug, Clone)]
 pub struct Axes3DRanges {
     x: Range<f64>,
     y: Range<f64>,
@@ -165,6 +184,7 @@ pub struct Axes3DRanges {
 }
 
 impl Axes3DRanges {
+    #[must_use]
     pub fn new(
         x: Range<f64>,
         y: Range<f64>,
@@ -174,8 +194,19 @@ impl Axes3DRanges {
     }
 }
 
+impl Default for Axes3DRanges {
+    fn default() -> Self {
+        Self {
+            x: 0.0..200.0,
+            y: 0.0..200.0,
+            z: 0.0..200.0,
+        }
+    }
+}
+
 
 pub struct PlottersRenderer<'a> {
+    caption: String,
     screen_resolution: (u32, u32),
     axes_ranges: Axes3DRanges,
     drone_colors: Vec<DroneColoring>,
@@ -188,8 +219,13 @@ pub struct PlottersRenderer<'a> {
 }
 
 impl<'a> PlottersRenderer<'a> {
+    /// # Panics
+    ///
+    /// Will panic if an error occurs during bitmap backend creation. 
+    #[must_use]
     pub fn new(
         output_path: &str,
+        caption: &str,
         screen_resolution: (u32, u32),
         axes_ranges: Axes3DRanges,
         drone_colors: &[DroneColoring],
@@ -198,15 +234,17 @@ impl<'a> PlottersRenderer<'a> {
         let area = BitMapBackend::gif(
             &output_path, 
             screen_resolution,
-            STEP_DURATION as u32
+            STEP_DURATION
         ).unwrap().into_drawing_area();
         let chart = Self::create_chart_context(
             &area, 
+            caption,
             font_size(screen_resolution.0),
             &axes_ranges
         ); 
 
         Self {
+            caption: caption.to_string(),
             screen_resolution,
             axes_ranges,
             drone_colors: drone_colors.to_vec(),
@@ -215,8 +253,12 @@ impl<'a> PlottersRenderer<'a> {
         }
     }
 
+    /// # Panics
+    ///
+    /// Will panic if an error occurs during chart context creation. 
     fn create_chart_context(
         area: &DrawingArea<BitMapBackend<'a>, Shift>, 
+        caption: &str,
         font_size: u32,
         axes_ranges: &Axes3DRanges
     ) -> ChartContext<
@@ -224,9 +266,9 @@ impl<'a> PlottersRenderer<'a> {
         BitMapBackend<'a>, 
         Cartesian3d<RangedCoordf64, RangedCoordf64, RangedCoordf64>
     > {
-        ChartBuilder::on(&area)
+        ChartBuilder::on(area)
             .margin(PLOT_MARGIN)
-            .caption("Drone network", ("sans-serif", font_size))
+            .caption(caption, ("sans-serif", font_size))
             .build_cartesian_3d(
                 axes_ranges.x.clone(),
                 axes_ranges.y.clone(),
@@ -237,6 +279,7 @@ impl<'a> PlottersRenderer<'a> {
     fn reset_chart_context(&mut self) {
         self.chart = Self::create_chart_context(
             &self.area, 
+            &self.caption,
             font_size(self.screen_resolution.0), 
             &self.axes_ranges
         );
@@ -245,28 +288,21 @@ impl<'a> PlottersRenderer<'a> {
     fn draw_drone_networks(
         &mut self, 
         drone_networks: &[NetworkModel]
-    // TODO improve error handling (with thiserror crate)
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), DrawError> {
         if self.drone_colors.len() != drone_networks.len() {
-            return Err("Colors count does not match network count");
+            return Err(DrawError::NotMatchingColorNumber);
         }
         
         self.reset_chart_context();
-
-        let destinations = get_drone_networks_destinations(drone_networks);
-        let rwds = drone_networks
-            .iter()
-            .fold(Vec::new(), |mut acc, network| { 
-                acc.extend(network.rwds());
-                acc
-            });
-
         self.chart.configure_axes().draw().unwrap();
         
+        let destinations = get_drone_networks_destinations(drone_networks);
         self.draw_destinations(&destinations);
         self.draw_command_centers(drone_networks);
         self.draw_drones(drone_networks);
-        self.draw_rwds(&rwds);
+        for drone_network in drone_networks {
+            self.draw_ewds(drone_network.ewds());
+        }
 
         self.area.present().unwrap();
         self.area.fill(&WHITE).unwrap();
@@ -314,23 +350,23 @@ impl<'a> PlottersRenderer<'a> {
             self.chart.draw_series(
                 drone_network
                     .drone_iter()
-                    .map(|drone| get_drone_primitive(drone, coloring))
+                    .map(|drone| get_drone_primitive(drone, *coloring))
             ).unwrap();
         }
     }
 
-    fn draw_rwds(&mut self, rwds: &[RWDType]) {
-        for rwd in rwds {
-            self.draw_rwd(rwd, &SignalType::Control);
-            self.draw_rwd(rwd, &SignalType::GPS);
+    fn draw_ewds(&mut self, ewds: &[ElectronicWarfare]) {
+        for ewd in ewds {
+            self.draw_ewd(ewd, WIFI_2_4GHZ_FREQUENCY);
+            self.draw_ewd(ewd, GPS_L1_FREQUENCY);
         }
     }
 
-    fn draw_rwd(&mut self, rwd: &RWDType, signal_type: &SignalType) {
+    fn draw_ewd(&mut self, ewd: &ElectronicWarfare, frequency: Megahertz) {
         self.chart.draw_series([
-            get_rwd_primitive(
-                rwd, 
-                signal_type, 
+            get_ewd_primitive(
+                ewd, 
+                frequency, 
                 self.screen_resolution.1
             )
         ]).unwrap();
@@ -346,6 +382,7 @@ pub struct Simulation<'a> {
 }
 
 impl<'a> Simulation<'a> {
+    #[must_use]
     pub fn new(
         end_time_in_millis: u32,
         drone_networks: Vec<NetworkModel>,
@@ -359,6 +396,9 @@ impl<'a> Simulation<'a> {
         }
     }
 
+    /// # Panics
+    ///
+    /// Will panic if an error occurs during rendering. 
     pub fn run(&mut self) {
         let running = set_ctrlc_handler(); 
 
@@ -377,7 +417,7 @@ impl<'a> Simulation<'a> {
 
             self.drone_networks
                 .iter_mut()
-                .for_each(|drone_network| drone_network.update());
+                .for_each(NetworkModel::update);
             
             self.renderer
                 .draw_drone_networks(&self.drone_networks)

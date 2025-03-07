@@ -15,6 +15,7 @@ pub struct Point3D {
 }
 
 impl Point3D {
+    #[must_use]
     pub fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
@@ -26,18 +27,6 @@ impl Point3D {
     }
 }
 
-impl Into<(f32, f32, f32)> for Point3D {
-    fn into(self) -> (f32, f32, f32) {
-        (self.x, self.y, self.z)
-    }
-}
-
-impl Into<(f64, f64, f64)> for Point3D {
-    fn into(self) -> (f64, f64, f64) {
-        (self.x as f64, self.y as f64, self.z as f64)
-    }
-}
-
 impl From<(f32, f32, f32)> for Point3D {
     fn from(value: (f32, f32, f32)) -> Self {
         Self { 
@@ -45,6 +34,16 @@ impl From<(f32, f32, f32)> for Point3D {
             y: value.1, 
             z: value.2 
         } 
+    }
+}
+
+impl From<Point3D> for (f64, f64, f64) {
+    fn from(point: Point3D) -> Self {
+        (
+            f64::from(point.x), 
+            f64::from(point.y), 
+            f64::from(point.z), 
+        )
     }
 }
 

@@ -1,77 +1,43 @@
-use std::collections::{hash_map::Values, HashMap};
+use std::collections::{HashMap, hash_map::Values};
 
-use crate::device::*;
-
-use super::*;
+use crate::device::{
+    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, STEP_DURATION, 
+    Suppressor, Transceiver, Transmitter,
+    networkmodel::{
+        ConnectionGraph, FindSignalLevel, IdToDroneMap, IdToLevelMap, 
+        MessagePreprocessError, Topology, try_preprocess_message
+    }
+};
+use crate::mathphysics::{
+    Megahertz, Meter, Millisecond, Point3D, SPEED_OF_LIGHT, kmps_to_mpms,
+    time_in_millis_from_distance_and_speed
+};
+use crate::communication::{
+    GPS_L1_FREQUENCY, Message, MessageType, NO_SIGNAL_LEVEL, Scenario, 
+    WIFI_2_4GHZ_FREQUENCY
+};
 
 
 type DelaySnapshot = HashMap<DeviceId, u32>;
 
 
-fn try_set_best_signal_level_with_cc(
-    tx: &CommandCenter,
-    rx: &Drone,
-    signal_levels: &mut HashMap<DeviceId, SignalLevel>,
-    signal_type: &SignalType,
-) {
-    try_set_best_signal_level(tx, rx, signal_levels, signal_type);
-}
+const DELAY_DISTANCE_COEFFICIENT: f32 = 1_500_000.0;
 
-fn try_set_best_signal_level_with_drones(
-    tx: &Drone,
-    rx: &Drone,
-    signal_levels: &mut HashMap<DeviceId, SignalLevel>,
-    signal_type: &SignalType,
-) {
-    try_set_best_signal_level(tx, rx, signal_levels, signal_type);
-}
-
-fn try_set_best_signal_level<T: Transmitter, R: Receiver>(
-    tx: &T,
-    rx: &R,
-    signal_levels: &mut HashMap<DeviceId, SignalLevel>,
-    signal_type: &SignalType,
-) {
-    let current_signal_level = signal_levels
-        .get(&rx.id())
-        .unwrap_or(&NO_SIGNAL_LEVEL);
-    let signal_level = tx.propagated_signal_level_at(rx, signal_type);
-
-    if signal_level > *current_signal_level {
-        signal_levels.insert(rx.id(), signal_level);
-    }
-}
-
-fn try_preprocess_message(
-    current_time: Millisecond,
-    message: &mut Message
-) -> Result<(), ()> {
-    if current_time < message.time() {
-        return Err(());
-    }
-    if message.is_in_progress() {
-        return Err(());
-    }
-
-    message.process();
-
-    Ok(())
-}
 
 // Making this function a method of ComplexNetwork and calling it from 
 // ComplexNetwork::process_message_queue() is impossible due to having mutable
 // and immutable references to self simultaneously.
 fn forward_message_to_drones(
-    drones: &mut IdToDroneMap,
-    signal_type: SignalType,
+    drone_map: &mut IdToDroneMap,
+    frequency: Megahertz,
     delays_snapshot: &DelaySnapshot,
     message: &Message,
     current_time: Millisecond
 ) {
-    for drone in drones.drones_mut() {
-        if let Some(delay) = delays_snapshot.get(&drone.id) {
+    for drone in drone_map.drones_mut() {
+        if let Some(delay) = delays_snapshot.get(&drone.id()) {
             if current_time >= message.time() + delay {
-                drone.process_message(signal_type, message);
+                drone.process_message(frequency, message);
             }
         }
     }
@@ -96,128 +62,58 @@ fn calculate_delay(distance: Meter, multiplier: f32) -> Millisecond {
         return 0;
     }
 
-    let delay = time_in_millis_from_distance_and_speed(
-        distance, 
-        mps_to_mpms(SIGNAL_SPEED) 
-    ) as f32;
-    let multiplied_delay = (delay * multiplier) as Millisecond;
+    let delay = (multiplier * time_in_millis_from_distance_and_speed(
+        distance * DELAY_DISTANCE_COEFFICIENT, 
+        kmps_to_mpms(SPEED_OF_LIGHT) 
+    )) as Millisecond;
 
-    let reminder = multiplied_delay % STEP_DURATION;
+    let reminder = delay % STEP_DURATION;
     
-    multiplied_delay - reminder
+    delay - reminder
 }
 
 
 #[derive(Clone, Default)]
-struct MessageQueueWithDelays(Vec<(SignalType, Message, DelaySnapshot)>);
+struct MessageQueue(Vec<(Megahertz, Message, DelaySnapshot)>);
 
-impl MessageQueueWithDelays {
+impl MessageQueue {
     fn remove_finished_messages(&mut self) {
         self.0.retain(|(_, message, _)| !message.is_finished());
     }
 
     fn iter_mut(
         &mut self
-    ) -> std::slice::IterMut<'_, (SignalType, Message, DelaySnapshot)> {
+    ) -> std::slice::IterMut<'_, (Megahertz, Message, DelaySnapshot)> {
         self.0.iter_mut()
     }
-    
+   
+    #[must_use]
     fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
 
-impl From<&Scenario> for MessageQueueWithDelays {
+impl<'a> IntoIterator for &'a mut MessageQueue{
+    type Item = &'a mut (Megahertz, Message, DelaySnapshot);
+    type IntoIter = std::slice::IterMut<
+        'a, 
+        (Megahertz, Message, DelaySnapshot)
+    >;
+    
+    fn into_iter(self) -> Self::IntoIter {
+         self.iter_mut()
+    }
+}
+
+impl From<&Scenario> for MessageQueue {
     fn from(scenario: &Scenario) -> Self {
         Self(
             scenario
                 .iter()
-                .map(|(signal_type, message)| 
-                    (*signal_type, *message, DelaySnapshot::default())
+                .map(|(frequency, message)| 
+                    (*frequency, *message, DelaySnapshot::default())
                 )
                 .collect()
-        )
-    }
-}
-
-
-#[derive(Clone)]
-pub struct ComplexNetworkBuilder {
-    command_center: Option<CommandCenter>,
-    drones: Option<Vec<Drone>>,
-    radar_warfare_devices: Option<Vec<ComplexNetworkRWD>>,
-    destination_in_meters: Option<Point3D>,
-    topology: Option<Topology>,
-    delay_multiplier: f32,
-    scenario: Option<Scenario>
-}
-
-impl ComplexNetworkBuilder {
-    pub fn new() -> Self {
-        Self {
-            command_center: None,
-            drones: None,
-            radar_warfare_devices: None,
-            destination_in_meters: None,
-            topology: None,
-            delay_multiplier: 0.0,
-            scenario: None
-        }
-    }
-
-    // TODO allow usage of the same command center for different networks.
-    pub fn set_command_center(mut self, command_center: CommandCenter) -> Self {
-        self.command_center = Some(command_center);
-        self
-    }
-
-    pub fn set_drones(mut self, drones: &[Drone]) -> Self {
-        self.drones = Some(drones.to_vec());
-        self
-    }
-
-    pub fn set_radar_warfare_devices(
-        mut self, 
-        radar_warfare_devices: &[ComplexNetworkRWD]
-    ) -> Self {
-        self.radar_warfare_devices = Some(radar_warfare_devices.to_vec());
-        self
-    }
-
-    pub fn set_destination(mut self, destination_in_meters: &Point3D) -> Self {
-        self.destination_in_meters = Some(*destination_in_meters);
-        self
-    }
-
-    pub fn set_topology(mut self, topology: Topology) -> Self {
-        self.topology = Some(topology);
-        self
-    }
-
-    pub fn set_delay_multiplier(mut self, delay_multiplier: f32) -> Self {
-        self.delay_multiplier = delay_multiplier;
-        self
-    }
-
-    pub fn set_scenario(mut self, scenario: Scenario) -> Self {
-        self.scenario = Some(scenario);
-        self
-    }
-
-    pub fn build(self) -> ComplexNetwork {
-        let drones = IdToDroneMap::from(
-            self.drones
-                .unwrap_or_default()
-                .as_slice()
-        );
-
-        ComplexNetwork::new(
-            self.command_center.unwrap_or_default(),
-            drones,
-            self.radar_warfare_devices.unwrap_or_default(),
-            self.scenario.unwrap_or_default(),
-            self.topology.unwrap_or_default(),
-            self.delay_multiplier
         )
     }
 }
@@ -227,113 +123,124 @@ impl ComplexNetworkBuilder {
 pub struct ComplexNetwork {
     current_time: Millisecond,
     command_center: CommandCenter,
-    drones: IdToDroneMap,
-    radar_warfare_devices: Vec<ComplexNetworkRWD>,
+    drone_map: IdToDroneMap,
+    electronic_warfare_devices: Vec<ElectronicWarfare>,
     destination_in_meters: Point3D,
     topology: Topology,
     connections: ConnectionGraph,
     delay_multiplier: f32,
-    message_queue: MessageQueueWithDelays,
+    message_queue: MessageQueue,
+    // TODO add control frequency Vec
 }
 
 impl ComplexNetwork {
-    fn new(
+    #[must_use]
+    pub fn new(
         command_center: CommandCenter,
-        drones: IdToDroneMap,
-        radar_warfare_devices: Vec<ComplexNetworkRWD>,
-        scenario: Scenario,
+        drone_map: IdToDroneMap,
+        electronic_warfare_devices: Vec<ElectronicWarfare>,
+        scenario: &Scenario,
         topology: Topology,
         delay_multiplier: f32
     ) -> Self {
         let mut complex_network = Self {
             current_time: 0,
             command_center,
-            radar_warfare_devices,
-            drones,
+            electronic_warfare_devices,
+            drone_map,
             destination_in_meters: Point3D::default(),
             topology,
             connections: ConnectionGraph::new(),
             delay_multiplier,
-            message_queue: MessageQueueWithDelays::from(&scenario),
+            message_queue: MessageQueue::from(scenario),
         };
 
         complex_network.set_initial_state();
 
         complex_network
     }
- 
+    
+    pub fn update(&mut self) {
+        self.update_connections_graph();
+        self.update_signal_levels();
+        self.suppress_network();
+        self.drone_map.remove_uncontrolled_drones(WIFI_2_4GHZ_FREQUENCY);
+        self.process_message_queue();
+        self.drone_map.update_states();
+      
+        self.current_time += STEP_DURATION;
+    }
+
+    #[must_use]
     pub fn destination(&self) -> &Point3D {
         &self.destination_in_meters
     }
-
+    
+    #[must_use]
     pub fn command_center(&self) -> &CommandCenter {
         &self.command_center
     }
 
+    #[must_use]
+    pub fn drone_map(&self) -> &IdToDroneMap {
+        &self.drone_map
+    }
+
+    #[must_use]
     pub fn drone_iter(&self) -> Values<'_, DeviceId, Drone> {
-        self.drones.drones() 
+        self.drone_map.drones() 
     }
     
+    #[must_use]
     pub fn drone_count(&self) -> usize {
-        self.drones.len() 
+        self.drone_map.len() 
     }
 
-    // DBG
-    pub fn drones(&self) -> &IdToDroneMap {
-        &self.drones
-    }
-
-    pub fn rwds(&self) -> Vec<RWDType> {
-        self.radar_warfare_devices
-            .iter()
-            .map(|rwd| RWDType::ComplexNetwork(rwd))
-            .collect()
+    #[must_use]
+    pub fn ewds(&self) -> &[ElectronicWarfare] {
+        self.electronic_warfare_devices.as_slice()
     }   
 
-    pub fn update(&mut self) {
-        self.update_connections_graph();
-        self.update_signal_levels();
-        self.drones.remove_uncontrolled_drones();
-        self.suppress_network();
-        self.process_message_queue();
-        self.drones.update_states();
-       
-        self.current_time += STEP_DURATION;
+    #[must_use]
+    pub fn connections(&self) -> &ConnectionGraph {
+        &self.connections
     }
 
     fn set_initial_state(&mut self) {
-        self.drones.connect_command_center(&self.command_center);
+        self.drone_map.connect_command_center(&self.command_center);
         self.update_connections_graph();
         self.update_signal_levels();
-        self.drones.remove_uncontrolled_drones();
+        self.drone_map.remove_uncontrolled_drones(WIFI_2_4GHZ_FREQUENCY);
     }
 
     fn update_connections_graph(&mut self) {
         self.connections.update(
             &self.command_center, 
-            &self.drones,
-            self.topology
+            &self.drone_map,
+            self.topology,
+            WIFI_2_4GHZ_FREQUENCY
         );
     }
 
     fn update_signal_levels(&mut self) {
-        self.drones.clear_rx_signal_levels(&SignalType::Control);
-
-        if let Ok(control_signal_levels) = try_find_best_signal_levels(
+        self.drone_map.clear_rx_signal_levels(WIFI_2_4GHZ_FREQUENCY);
+        
+        if let Ok(
+            control_signal_levels
+        ) = Self::try_find_best_signal_levels(
             &self.command_center,
-            &self.drones,
+            &self.drone_map,
             &self.connections,
-            &SignalType::Control,
-            try_set_best_signal_level_with_cc,
-            try_set_best_signal_level_with_drones
+            WIFI_2_4GHZ_FREQUENCY
         ) {
-            self.drones.set_rx_signal_levels(
-                control_signal_levels, 
-                &SignalType::Control
-            )
+            self.drone_map.all_receive_signals(
+                &control_signal_levels, 
+                WIFI_2_4GHZ_FREQUENCY
+            );
+            self.drone_map.all_rx_signals_to_tx(WIFI_2_4GHZ_FREQUENCY);
         }
     }
-
+    
     fn process_message_queue(&mut self) {
         if self.message_queue.is_empty() {
             return;
@@ -342,24 +249,24 @@ impl ComplexNetwork {
         // Preprocess delays to avoid unnecessary function calls in the loop.
         let delays = self.delays();
 
-        for (signal_type, message, delays_snapshot) in self.message_queue
-            .iter_mut()
-        {
-            *delays_snapshot = delays.clone();
-            
-            if try_preprocess_message(self.current_time, message).is_err() {
-                continue;
-            }
-            
-            match message.message_type() {
-                MessageType::SetDestination(destination, _) =>
-                    self.destination_in_meters = *destination,
-                _ => ()
-            }
+        for (frequency, message, delays_snapshot) in &mut self.message_queue {
+            match try_preprocess_message(self.current_time, message) {
+                Err(MessagePreprocessError::TooEarly) => continue, 
+                Err(MessagePreprocessError::AlreadyPreprocessed) => (),
+                Ok(()) =>  {
+                    delays_snapshot.clone_from(&delays);
 
+                    match message.message_type() {
+                        MessageType::SetDestination(destination, _) =>
+                            self.destination_in_meters = *destination,
+                        MessageType::ChangeGoal(_) => ()
+                    }
+                }
+            }
+            
             forward_message_to_drones(
-                &mut self.drones,
-                *signal_type,
+                &mut self.drone_map,
+                *frequency,
                 delays_snapshot,
                 message,
                 self.current_time
@@ -377,9 +284,10 @@ impl ComplexNetwork {
 
     // Connections graph should already be created and populated before delay
     // calculation.
+    #[must_use]
     fn delays(&self) -> DelaySnapshot {
         let distances = self.connections.single_source_dijkstra(
-            self.command_center.id
+            self.command_center.id()
         ).expect("Failed to find the shortest paths");
 
         distances
@@ -393,408 +301,250 @@ impl ComplexNetwork {
     }
  
     fn suppress_network(&mut self) {
-        for rwd in &self.radar_warfare_devices {
-            for drone in self.drones.drones_mut() {
-                rwd.suppress_signal_level(drone, &SignalType::Control);
-                rwd.suppress_signal_level(drone, &SignalType::GPS);
+        for ewd in &self.electronic_warfare_devices {
+            for drone in self.drone_map.drones_mut() {
+                ewd.suppress_signal(drone, WIFI_2_4GHZ_FREQUENCY);
+                ewd.suppress_signal(drone, GPS_L1_FREQUENCY);
             }
         }
     }
 }
 
+impl FindSignalLevel for ComplexNetwork {
+    fn try_set_better_signal_level<T, TR>(
+        tx: &T,
+        rx: &TR,
+        signal_levels: &mut IdToLevelMap,
+        frequency: Megahertz
+    ) 
+    where
+        T: Transmitter + Clone,
+        TR: Transceiver
+    {
+        // TODO find a way to avoid cloning (without multiple mutable borrows)
+        let mut tx = tx.clone();
 
-pub struct ComplexNetworkRWDBuilder {
-    id: DeviceId,
-    position: Option<Point3D>,
-    tx_module: Option<TRXModule>,
-    rx_module: Option<TRXModule>
-}
-
-impl ComplexNetworkRWDBuilder {
-    pub fn new() -> Self {
-        Self {
-            id: generate_device_id(),
-            position: None,
-            tx_module: None,
-            rx_module: None
+        if let Some(tx_signal_level) = signal_levels.get(&tx.id()) {
+            tx.set_signal_level(frequency, *tx_signal_level);
         }
-    }
 
-    pub fn set_position(mut self, position: Point3D) -> Self {
-        self.position = Some(position);
-        self
-    }
-    
-    pub fn set_tx_module(mut self, tx_module: TRXModule) -> Self {
-        self.tx_module = Some(tx_module);
-        self
-    }
-    
-    pub fn set_rx_module(mut self, rx_module: TRXModule) -> Self {
-        self.rx_module = Some(rx_module);
-        self
-    }
+        let rx_signal_level = signal_levels
+            .get(&rx.id())
+            .unwrap_or(&NO_SIGNAL_LEVEL);
+        let signal_level_at_rx = tx.propagated_signal_level_at(rx, frequency);
 
-    pub fn set_trx_module(mut self, mut trx_system: TRXSystem) -> Self {
-        self.tx_module = Some(std::mem::take(trx_system.tx_module_mut()));
-        self.rx_module = Some(std::mem::take(trx_system.rx_module_mut()));
-        self
-    }
-
-    pub fn build(self) -> ComplexNetworkRWD {
-        let trx_system = TRXSystem::new(
-            self.tx_module.unwrap_or_default(),
-            self.rx_module.unwrap_or_default()
-        );
-        
-        ComplexNetworkRWD::new(
-            self.id,
-            self.position.unwrap_or_default(),
-            trx_system
-        )
-    }
-}
-
-
-#[derive(Clone)]
-pub struct ComplexNetworkRWD {
-    id: DeviceId,
-    position_in_meters: Point3D,
-    trx_system: TRXSystem
-}
-
-impl ComplexNetworkRWD {
-    pub fn new(
-        id: DeviceId,
-        position_in_meters: Point3D,
-        trx_system: TRXSystem
-    ) -> Self {
-        Self { 
-            id,
-            position_in_meters, 
-            trx_system
+        if signal_level_at_rx > *rx_signal_level {
+            signal_levels.insert(rx.id(), signal_level_at_rx);
         }
     }
 }
-
-impl Device for ComplexNetworkRWD {
-    fn id(&self) -> DeviceId {
-        self.id
-    }
-}
-
-impl Hash for ComplexNetworkRWD {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl Position for ComplexNetworkRWD {
-    fn position(&self) -> &Point3D {
-        &self.position_in_meters
-    }
-}
-
-impl Transmitter for ComplexNetworkRWD {
-    fn tx_signal_levels(&self) -> &HashMap<SignalType, SignalLevel> {
-        self.trx_system.tx_signal_levels()
-    }
-    
-    fn tx_signal_level(&self, signal_type: &SignalType) -> &SignalLevel {
-        self.trx_system.tx_signal_level(signal_type)
-    }
-
-    fn area(&self, signal_type: &SignalType) -> SignalArea {
-        self.trx_system.area(signal_type)
-    }
-
-    fn connection_distance<P: Position>(
-        &self, 
-        object: &P, 
-        signal_type: &SignalType
-    ) -> Option<Meter> {
-        self.trx_system.connection_distance(
-            self.distance_to(object), 
-            signal_type
-        )
-    }
-    
-    fn propagated_signal_level_at<R: Receiver>(
-        &self,
-        receiver: &R,
-        signal_type: &SignalType
-    ) -> SignalLevel {
-        let distance_to_rx = self.distance_to(receiver);
-
-        self.trx_system.tx_signal_level_at(distance_to_rx, signal_type)
-    }
-
-    fn propagate_signal_level<R: Receiver>(
-        &self,
-        receiver: &mut R,
-        signal_type: SignalType
-    ) {
-        let propagated_signal_level_at_rx = self.propagated_signal_level_at(
-            receiver, 
-            &signal_type
-        );
-
-        receiver.receive_signal(signal_type, propagated_signal_level_at_rx);
-    }
-}
-
-impl Suppressor for ComplexNetworkRWD {
-    fn suppress_signal_level<R: Receiver>(
-            &self,
-            receiver: &mut R,
-            signal_type: &SignalType
-    ) {
-        let suppressor_signal_level_at_rx = self.propagated_signal_level_at(
-            receiver,
-            signal_type
-        );
-
-        receiver.signal_level_suppression(
-            *signal_type, 
-            suppressor_signal_level_at_rx
-        );
-    }
-}
-
-impl Receiver for ComplexNetworkRWD {
-    fn rx_signal_levels(&self) -> &HashMap<SignalType, SignalLevel> {
-        self.trx_system.rx_signal_levels()
-    }
-
-    fn rx_signal_level(&self, signal_type: &SignalType) -> &SignalLevel {
-        self.trx_system.rx_signal_level(signal_type)
-    }
-
-    fn receives_signal(&self, signal_type: &SignalType) -> bool {
-        self.trx_system.receives_signal_level(signal_type)
-    }
-    
-    fn receive_signal(
-        &mut self, 
-        signal_type: SignalType,
-        signal_level: SignalLevel
-    ) {
-        self.trx_system.receive_signal_level(signal_type, signal_level); 
-    }
-
-    fn receive_message(
-        &mut self,
-        signal_type: SignalType,
-        message: &Message
-    ) -> Result<(), ()> {
-        self.trx_system.receive_message(signal_type, message) 
-    }
-    
-    fn signal_level_suppression(
-        &mut self,
-        suppressor_signal_type: SignalType,
-        suppressor_signal_level: SignalLevel
-    ) {
-        self.trx_system.suppress_signal_level(
-            suppressor_signal_type, 
-            suppressor_signal_level
-        );
-    }   
-}
-
-impl Transceiver for ComplexNetworkRWD {}
 
 
 #[cfg(test)]
 mod tests {
+    use crate::communication::{
+        GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, RED_SIGNAL_LEVEL, 
+        SignalArea, SignalLevel, YELLOW_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
+    };
+    use crate::device::{
+        CommandCenterBuilder, DroneBuilder,
+        modules::{TRXModule, TRXSystem}
+    };
+    use crate::mathphysics::Meter;
+    
     use super::*;
 
-    const CC_TX_CONTROL_RADIUS: f32    = 300.0;
-    const DRONE_TX_CONTROL_RADIUS: f32 = 10.0;
-    const RWD_TX_CONTROL_RADIUS: f32   = 25.0;
-    const RWD_TX_GPS_RADIUS: f32       = 50.0;
+    // These constants were introduced for testing independently from the global
+    // constants.
+    const CC_TX_CONTROL_RADIUS: Meter    = 300.0;
+    const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
+    const VERY_BIG_STRENGTH_VALUE: f32   = GREEN_SIGNAL_STRENGTH_VALUE * 1000.0;
 
-    fn rwd_signal_levels() -> HashMap<SignalType, SignalLevel> {
-        HashMap::from([
-            (
-                SignalType::Control, 
-                SignalLevel::from(
-                    SignalArea::build(RWD_TX_CONTROL_RADIUS).unwrap()
+
+    fn same_levels_of_id_to_level_maps(
+        signal_levels1: &IdToLevelMap,
+        signal_levels2: &IdToLevelMap
+    ) -> bool {
+        let same_levels = |map1: &IdToLevelMap, map2: &IdToLevelMap| -> bool {
+            map1
+                .iter()
+                .all(|(id, signal_level1)| 
+                    match map2.get(id) {
+                        Some(signal_level2) => signal_level2
+                            .same_level(signal_level1),
+                        None => signal_level1
+                            .same_level(&NO_SIGNAL_LEVEL)
+                    }
                 )
-            ),
-            (
-                SignalType::GPS, 
-                SignalLevel::from(
-                    SignalArea::build(RWD_TX_GPS_RADIUS).unwrap()
-                )
+        };
+        
+        let same_from_1 = same_levels(signal_levels1, signal_levels2);
+        let same_from_2 = same_levels(signal_levels2, signal_levels1);
+
+        same_from_1 && same_from_2
+    }
+
+    fn cc_tx_module() -> TRXModule {
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
+
+        let max_tx_signal_levels = HashMap::from([
+            (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
+        ]);
+        let tx_signal_levels = HashMap::from([(
+            frequency, 
+            SignalLevel::from_area(
+                SignalArea::build(CC_TX_CONTROL_RADIUS).unwrap(),
+                frequency
             )
-        ])
+        )]);
+
+        TRXModule::build(
+            max_tx_signal_levels,
+            tx_signal_levels
+        ).unwrap()
+    }
+
+    fn drone_tx_module() -> TRXModule {
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        
+        let max_tx_signal_levels = HashMap::from([
+            (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
+        ]);
+        let tx_signal_levels = HashMap::from([(
+            frequency, 
+            SignalLevel::from_area(
+                SignalArea::build(DRONE_TX_CONTROL_RADIUS).unwrap(), 
+                frequency
+            )
+        )]);
+
+        TRXModule::build(
+            max_tx_signal_levels,
+            tx_signal_levels,
+        ).unwrap()
+    }
+
+    fn drone_rx_module() -> TRXModule {
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        
+        let max_rx_signal_levels = HashMap::from([
+            (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
+        ]);
+        let rx_signal_levels = HashMap::from([
+            (frequency, NO_SIGNAL_LEVEL)
+        ]);
+
+        TRXModule::build(
+            max_rx_signal_levels,
+            rx_signal_levels,
+        ).unwrap()   
     }
 
     fn drone_with_trx_system_set(position: Point3D) -> Drone {
         DroneBuilder::new()
             .set_global_position(position)
-            .set_tx_module(
-                TRXModule::build(
-                    AntennaType::Strength,
-                    HashMap::from([(SignalType::Control, GREEN_SIGNAL_LEVEL)]),
-                    HashMap::from([(
-                        SignalType::Control, 
-                        SignalLevel::from(
-                            SignalArea::build(DRONE_TX_CONTROL_RADIUS).unwrap()
-                        )
-                    )]),
-                ).unwrap()
-            )
-            .set_rx_module(
-                TRXModule::build(
-                    AntennaType::Strength,
-                    HashMap::from([(SignalType::Control, GREEN_SIGNAL_LEVEL)]),
-                    HashMap::from([(SignalType::Control, NO_SIGNAL_LEVEL)]),
-                ).unwrap()
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: drone_tx_module(),
+                    rx_module: drone_rx_module() 
+                }
             )
             .build()
     }
 
+
     #[test]
     fn better_signal_with_cc() {
-        let signal_type = SignalType::Control;
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
 
         let command_center = CommandCenterBuilder::new()
-            .set_tx_module(
-                TRXModule::build(
-                    AntennaType::Strength,
-                    HashMap::from([(signal_type, GREEN_SIGNAL_LEVEL)]),
-                    HashMap::from([(
-                        SignalType::Control, 
-                        SignalLevel::from(
-                            SignalArea::build(DRONE_TX_CONTROL_RADIUS).unwrap()
-                        )
-                    )])
-                ).unwrap()
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: drone_tx_module(),
+                    rx_module: TRXModule::default() 
+                }
             )
             .build();
 
-        let green_drone = drone_with_trx_system_set(
-            Point3D::new(5.0, 0.0, 0.0)
-        );    
-        let yellow_drone = drone_with_trx_system_set(
-            Point3D::new(8.0, 0.0, 0.0)
-        );
-        let red_drone = drone_with_trx_system_set(
-            Point3D::new(14.9, 0.0, 0.0)
-        );
-        let black_drone = drone_with_trx_system_set(
-            Point3D::new(25.0, 0.0, 0.0)
-        );
-
         let mut best_signal_levels = HashMap::new();
-        let drones = vec![green_drone, yellow_drone, red_drone, black_drone];
         
+        let drones = [
+            drone_with_trx_system_set(Point3D::new(1.0, 0.0, 0.0)), // Green
+            drone_with_trx_system_set(Point3D::new(1.5, 0.0, 0.0)), // Yellow
+            drone_with_trx_system_set(Point3D::new(4.0, 0.0, 0.0)), // Red
+            drone_with_trx_system_set(Point3D::new(10.0, 0.0, 0.0)) // Black
+        ]; 
+
         for drone in &drones {
-            try_set_best_signal_level_with_cc(
-                &command_center, 
+            ComplexNetwork::try_set_better_signal_level(
+                &command_center,
                 drone, 
                 &mut best_signal_levels, 
-                &signal_type
+                frequency
             );
         }
 
         assert!(
-            command_center.tx_signal_level(&signal_type) 
-            >= drones[0].rx_signal_level(&signal_type)
-        ); 
-        assert!(
-            drones[0].rx_signal_level(&signal_type) 
-            >= drones[1].rx_signal_level(&signal_type)
-        ); 
-        assert!(
-            drones[1].rx_signal_level(&signal_type) 
-            >= drones[2].rx_signal_level(&signal_type)
-        ); 
-        assert!(
-            drones[2].rx_signal_level(&signal_type) 
-            >= drones[3].rx_signal_level(&signal_type)
-        ); 
-    }
-
-    #[test]
-    fn suppress_tranceivers() {
-        let signal_type = SignalType::Control;
-        let trx_module = TRXModule::build(
-            AntennaType::Strength,
-            rwd_signal_levels(),
-            rwd_signal_levels()
-        ).unwrap();
-
-        let rwd = ComplexNetworkRWDBuilder::new()
-            .set_tx_module(trx_module.clone())
-            .build();
-        let mut drone_inside = DroneBuilder::new()
-            .set_rx_module(trx_module.clone())
-            .build();
-        let mut drone_outside = DroneBuilder::new()
-            .set_global_position(
-                Point3D::new(
-                    RWD_TX_CONTROL_RADIUS * 20.0,
-                    0.0,
-                    0.0
-                )
-            )
-            .set_rx_module(trx_module)
-            .build();
-
-        rwd.suppress_signal_level(&mut drone_inside, &signal_type);
-        rwd.suppress_signal_level(&mut drone_outside, &signal_type);
-
-        assert!(
-            *drone_inside
-                .rx_signal_level(&signal_type) < BLACK_SIGNAL_LEVEL
+            best_signal_levels
+                .get(&drones[0].id())
+                .unwrap_or(&NO_SIGNAL_LEVEL)
+                .is_green()
         );
         assert!(
-            *drone_outside
-                .rx_signal_level(&signal_type) >= BLACK_SIGNAL_LEVEL
+            best_signal_levels
+                .get(&drones[1].id())
+                .unwrap_or(&NO_SIGNAL_LEVEL)
+                .is_yellow()
+        );
+        assert!(
+            best_signal_levels
+                .get(&drones[2].id())
+                .unwrap_or(&NO_SIGNAL_LEVEL)
+                .is_red()
+        );
+        assert!(
+            best_signal_levels
+                .get(&drones[3].id())
+                .unwrap_or(&NO_SIGNAL_LEVEL)
+                .is_black()
         );
     }
 
     #[test]
     fn check_delays() {
         let command_center = CommandCenterBuilder::new()
-            .set_tx_module(
-                TRXModule::build(
-                    AntennaType::Strength,
-                    HashMap::from([(SignalType::Control, GREEN_SIGNAL_LEVEL)]),
-                    HashMap::from([(
-                        SignalType::Control, 
-                        SignalLevel::from(
-                            SignalArea::build(CC_TX_CONTROL_RADIUS).unwrap()
-                        )
-                    )])
-                ).unwrap()
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: cc_tx_module(),
+                    rx_module: TRXModule::default() 
+                }
             )
             .build();
+        let command_center_id = command_center.id();
 
-        let distance = 5.0;
+        let distance = 50.0;
         let drone = DroneBuilder::new()
             .set_global_position(Point3D::new(distance, 0.0, 0.0))
-            .set_rx_module(
-                TRXModule::build(
-                    AntennaType::Strength,
-                    HashMap::from([(SignalType::Control, GREEN_SIGNAL_LEVEL)]),
-                    HashMap::from([(SignalType::Control, NO_SIGNAL_LEVEL)]),
-                ).unwrap()
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: TRXModule::default(),
+                    rx_module: drone_rx_module() 
+                }
             )
             .build();
         let drone_id = drone.id();
 
-        let mut network = ComplexNetworkBuilder::new()
-            .set_command_center(command_center)
-            .set_drones(&[drone])
-            .set_topology(Topology::Mesh)
-            .build();
+        let mut network = ComplexNetwork::new(
+            command_center, 
+            IdToDroneMap::from([drone]), 
+            Vec::new(), 
+            &Scenario::default(), 
+            Topology::Mesh, 
+            0.0
+        );
 
         let expected_delays = HashMap::from([
-            (network.command_center.id, 0),
+            (network.command_center.id(), 0),
             (drone_id, 0)
         ]);
         let delays = network.delays();
@@ -803,11 +553,10 @@ mod tests {
 
         let multiplier = 1.0;
         network.delay_multiplier = multiplier;
-        network.update();
 
         let expected_delays = HashMap::from([
-            (network.command_center.id, 0),
-            (drone_id, calculate_delay(distance, multiplier))
+            (command_center_id, 0),
+            (drone_id, 250)
         ]);
         let delays = network.delays();
 
@@ -815,90 +564,140 @@ mod tests {
     }
 
     #[test]
-    fn propagate_signal_level_by_strength() {
+    fn propagate_signal_level_in_star() {
         let command_center = CommandCenterBuilder::new()
-            .set_tx_module(
-                TRXModule::build(
-                    AntennaType::Strength,
-                    HashMap::from([(SignalType::Control, GREEN_SIGNAL_LEVEL)]),
-                    HashMap::from([(
-                        SignalType::Control, 
-                        SignalLevel::from(
-                            SignalArea::build(DRONE_TX_CONTROL_RADIUS).unwrap()
-                        )
-                    )])
-                ).unwrap()
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: cc_tx_module(),
+                    rx_module: TRXModule::default() 
+                }
             )
             .build();
 
-        // Network 1: full mesh with edge weight 1.0.
+        // Network 1: full mesh with edge weight 25.0.
         let drones1 = [
-            drone_with_trx_system_set(Point3D::new(1.0, 0.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(2.0, 0.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(3.0, 0.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(4.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(25.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(25.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(25.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(25.0, 0.0, 0.0)),
         ];
-        let ids1: Vec<DeviceId> = drones1
-            .iter()
-            .map(|drone| drone.id())
-            .collect();
-
-        let network1 = ComplexNetworkBuilder::new()
-            .set_command_center(command_center.clone())
-            .set_drones(&drones1)
-            .set_topology(Topology::Star)
-            .build();
 
         let expected_signal_levels1 = HashMap::from([
-            (ids1[0], RED_SIGNAL_LEVEL), 
-            (ids1[1], RED_SIGNAL_LEVEL), 
-            (ids1[2], RED_SIGNAL_LEVEL), 
-            (ids1[3], RED_SIGNAL_LEVEL), 
+            (drones1[0].id(), GREEN_SIGNAL_LEVEL), 
+            (drones1[1].id(), GREEN_SIGNAL_LEVEL), 
+            (drones1[2].id(), GREEN_SIGNAL_LEVEL), 
+            (drones1[3].id(), GREEN_SIGNAL_LEVEL), 
         ]);
-        let signal_levels1 = network1.drones.all_rx_signal_levels(
-            &SignalType::Control
+
+        let network1 = ComplexNetwork::new(
+            command_center.clone(), 
+            IdToDroneMap::from(drones1), 
+            Vec::new(), 
+            &Scenario::default(), 
+            Topology::Star, 
+            0.0
+        );
+
+        let signal_levels1 = network1.drone_map.all_rx_signal_levels(
+            WIFI_2_4GHZ_FREQUENCY
         );
 
         assert!(
-            same_levels_of_id_hashmaps(
+            same_levels_of_id_to_level_maps(
                 &expected_signal_levels1,
                 &signal_levels1
             )
         );
         
-        // Network 2:
+        // Network 2 Edges:
         // 
-        // A -(7.0)- B -(7.0)- C -(7.0)- D -(7.0)- E 
+        // A -(25.0)- B
+        // A -(50.0)- C
+        // A -(100.0)- D
+        // A -(400.0)- E
         //
         let drones2 = [
-            drone_with_trx_system_set(Point3D::new(7.0, 0.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(14.0, 0.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(21.0, 0.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(28.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(25.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(50.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(100.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(400.0, 0.0, 0.0)),
         ];
-        let ids2: Vec<DeviceId> = drones2
-            .iter()
-            .map(|drone| drone.id)
-            .collect();
-
-        let network2 = ComplexNetworkBuilder::new()
-            .set_command_center(command_center)
-            .set_drones(&drones2)
-            .set_topology(Topology::Mesh)
-            .build();
-
+        
         let expected_signal_levels2 = HashMap::from([
-            (ids2[0], RED_SIGNAL_LEVEL), 
-            (ids2[1], RED_SIGNAL_LEVEL), 
+            (drones2[0].id(), GREEN_SIGNAL_LEVEL), 
+            (drones2[1].id(), YELLOW_SIGNAL_LEVEL), 
+            (drones2[2].id(), RED_SIGNAL_LEVEL), 
         ]);
-        let signal_levels2 = network2.drones.all_rx_signal_levels(
-            &SignalType::Control
+
+        let network2 = ComplexNetwork::new(
+            command_center, 
+            IdToDroneMap::from(drones2), 
+            Vec::new(), 
+            &Scenario::default(), 
+            Topology::Mesh, 
+            0.0
+        );
+
+        let signal_levels2 = network2.drone_map.all_rx_signal_levels(
+            WIFI_2_4GHZ_FREQUENCY
         );
 
         assert!(
-            same_levels_of_id_hashmaps(
+            same_levels_of_id_to_level_maps(
                 &expected_signal_levels2,
                 &signal_levels2
+            )
+        );
+    }
+
+    #[test]
+    fn propagate_signal_level_in_mesh() {
+        // Network Edges:
+        // 
+        // A -(1.1)- B
+        // A -(2.0)- C
+        // A -(3.0)- D
+        // A -(10.0)- E
+        //
+        let command_center = CommandCenterBuilder::new()
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: drone_tx_module(),
+                    rx_module: TRXModule::default() 
+                }
+            )
+            .build();
+        let drones = [
+            drone_with_trx_system_set(Point3D::new(1.1, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(2.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(3.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(10.0, 0.0, 0.0)),
+        ];
+        
+        let expected_signal_levels = HashMap::from([
+            (drones[0].id(), GREEN_SIGNAL_LEVEL), 
+            (drones[1].id(), YELLOW_SIGNAL_LEVEL),
+            (drones[2].id(), RED_SIGNAL_LEVEL),   
+            (drones[3].id(), YELLOW_SIGNAL_LEVEL), // Black in Star topology 
+        ]);
+
+        let network = ComplexNetwork::new(
+            command_center, 
+            IdToDroneMap::from(drones), 
+            Vec::new(), 
+            &Scenario::default(), 
+            Topology::Mesh, 
+            0.0
+        );
+
+        let signal_levels = network.drone_map.all_rx_signal_levels(
+            WIFI_2_4GHZ_FREQUENCY
+        );
+
+        assert!(
+            same_levels_of_id_to_level_maps(
+                &expected_signal_levels,
+                &signal_levels
             )
         );
     }

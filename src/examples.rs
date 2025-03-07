@@ -2,17 +2,26 @@ use std::collections::HashMap;
 
 use rand::prelude::*;
 
-use crate::communication::{message::*, signal::*};
+use crate::communication::{
+    Goal, Message, MessageType, Scenario, CC_TX_CONTROL_AREA, 
+    DRONE_TX_CONTROL_AREA, EWD_TX_CONTROL_AREA, EWD_TX_GPS_AREA, 
+    GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL, SignalLevel, 
+    WIFI_2_4GHZ_FREQUENCY
+};
 use crate::device::{
-    *, 
-    networkmodel::*,
-    modules::{AntennaType, TRXModule}
+    CommandCenterBuilder, Drone, DroneBuilder, ElectronicWarfareBuilder, 
+    networkmodel::{NetworkModelBuilder, NetworkModelType, Topology}, 
+    modules::{TRXModule, TRXSystem}
 };
 use crate::mathphysics::Point3D;
-use crate::simulation::*;
+use crate::simulation::{
+    Axes3DRanges, DroneColoring, END_TIME, PlottersRenderer, Simulation
+};
 
-use super::{NetworkModelType, Config};
+use super::{AntennaType, Config};
 
+
+const BIG_SIGNAL_STRENGTH_VALUE: f32 = 100_000.0;
 
 const DRONE_NETWORK_POSITION: Point3D  = Point3D { x: 150.3, y: 90.6, z: 25.5 };
 const DRONE_DESTINATION: Point3D       = Point3D { x: 0.0, y: 0.0, z: 0.0 };
@@ -21,78 +30,129 @@ const COMMAND_CENTER_POSITION: Point3D = Point3D { x: 200.0, y: 100.0, z: 0.0 };
 const PLOT_RESOLUTION: (u32, u32) = (800, 600);
 
 
-fn cc_tx_module(antenna: AntennaType) -> TRXModule {
-    TRXModule::build(
-        antenna,
-        HashMap::from([(SignalType::Control, GREEN_SIGNAL_LEVEL)]),
-        HashMap::from([(
-            SignalType::Control,
-            SignalLevel::from(CC_TX_CONTROL_AREA)
-        )])
-    ).unwrap()
-}
-
-fn drone_tx_module(antenna: AntennaType) -> TRXModule {
-    TRXModule::build(
-        antenna,
-        HashMap::from([
-            (SignalType::Control, SignalLevel::from(DRONE_TX_CONTROL_AREA))
-        ]),
-        HashMap::new()
-    ).unwrap()
-}
-
-fn drone_rx_module(antenna: AntennaType) -> TRXModule {
-    TRXModule::build(
-        antenna,
-        HashMap::from([
-            (SignalType::Control, GREEN_SIGNAL_LEVEL),
-            (SignalType::GPS, GREEN_SIGNAL_LEVEL)
-        ]),
-        HashMap::new()
-    ).unwrap()
-}
-
-fn gps_rwd_tx_module(antenna: AntennaType) -> TRXModule {
+fn cc_trx_system(antenna: &AntennaType) -> TRXSystem {
+    let max_tx_signal_levels = HashMap::from([(
+        WIFI_2_4GHZ_FREQUENCY, 
+        SignalLevel::from(BIG_SIGNAL_STRENGTH_VALUE)
+    )]);
     let tx_signal_levels = HashMap::from([(
-        SignalType::GPS, 
-        SignalLevel::from(RWD_TX_GPS_AREA)
+        WIFI_2_4GHZ_FREQUENCY,
+        SignalLevel::from_area(CC_TX_CONTROL_AREA, WIFI_2_4GHZ_FREQUENCY)
     )]);
 
-    TRXModule::build(
-        antenna,
-        tx_signal_levels.clone(),
+    let tx_module = TRXModule::build(
+        max_tx_signal_levels,
         tx_signal_levels
-    ).unwrap()
+    ).unwrap();
+
+    match antenna {
+        AntennaType::Color => TRXSystem::Color(tx_module),
+        AntennaType::Strength => TRXSystem::Strength { 
+            tx_module, 
+            rx_module: TRXModule::default()
+        }
+    }
 }
 
-fn control_rwd_tx_module(antenna: AntennaType) -> TRXModule {
+fn drone_trx_system(antenna: &AntennaType) -> TRXSystem {
+    match antenna {
+        AntennaType::Color => {
+            let max_signal_levels = HashMap::from([
+                (
+                    WIFI_2_4GHZ_FREQUENCY, 
+                    SignalLevel::from_area(
+                        DRONE_TX_CONTROL_AREA, 
+                        WIFI_2_4GHZ_FREQUENCY
+                    )
+                ),
+                (GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL)
+            ]);
+
+            let trx_module = TRXModule::build(
+                max_signal_levels,
+                HashMap::new()
+            ).unwrap();
+
+            TRXSystem::Color(trx_module)
+        },
+        AntennaType::Strength => {
+            let max_tx_signal_levels = HashMap::from([(
+                WIFI_2_4GHZ_FREQUENCY, 
+                SignalLevel::from_area(
+                    DRONE_TX_CONTROL_AREA, 
+                    WIFI_2_4GHZ_FREQUENCY
+                )
+            )]);
+            let max_rx_signal_levels = HashMap::from([
+                (WIFI_2_4GHZ_FREQUENCY, RED_SIGNAL_LEVEL),
+                (GPS_L1_FREQUENCY, RED_SIGNAL_LEVEL)
+            ]);
+
+            let tx_module = TRXModule::build(
+                max_tx_signal_levels,
+                HashMap::new()
+            ).unwrap();
+            let rx_module = TRXModule::build(
+                max_rx_signal_levels,
+                HashMap::new()
+            ).unwrap();
+
+            TRXSystem::Strength { tx_module, rx_module }
+        }
+    }
+}
+
+fn gps_ewd_trx_system(antenna: &AntennaType) -> TRXSystem {
     let tx_signal_levels = HashMap::from([(
-        SignalType::Control, 
-        SignalLevel::from(RWD_TX_CONTROL_AREA)
+        GPS_L1_FREQUENCY, 
+        SignalLevel::from_area(EWD_TX_GPS_AREA, GPS_L1_FREQUENCY)
     )]);
 
-    TRXModule::build(
-        antenna,
+    let tx_module = TRXModule::build(
         tx_signal_levels.clone(),
         tx_signal_levels
-    ).unwrap()
+    ).unwrap();
+
+    match antenna {
+        AntennaType::Color => TRXSystem::Color(tx_module),
+        AntennaType::Strength => TRXSystem::Strength { 
+            tx_module, 
+            rx_module: TRXModule::default()
+        }
+    }
+}
+
+fn control_ewd_trx_system(antenna: &AntennaType) -> TRXSystem {
+    let tx_signal_levels = HashMap::from([(
+        WIFI_2_4GHZ_FREQUENCY, 
+        SignalLevel::from_area(EWD_TX_CONTROL_AREA, WIFI_2_4GHZ_FREQUENCY)
+    )]);
+
+    let tx_module = TRXModule::build(
+        tx_signal_levels.clone(),
+        tx_signal_levels
+    ).unwrap();
+
+    match antenna {
+        AntennaType::Color => TRXSystem::Color(tx_module),
+        AntennaType::Strength => TRXSystem::Strength { 
+            tx_module, 
+            rx_module: TRXModule::default()
+        }
+    }
 }
 
 fn default_movement_scenario() -> Scenario {
     Scenario::from([
         (
-            SignalType::Control,
+            WIFI_2_4GHZ_FREQUENCY,
             Message::new(
                 0, 
-                MessageType::SetDestination(
-                    Point3D::from(DRONE_DESTINATION),
-                    Goal::Attack
-                )
+                MessageType::SetDestination(DRONE_DESTINATION, Goal::Attack)
             )
         ),
         (
-            SignalType::Control,
+            WIFI_2_4GHZ_FREQUENCY,
             Message::new(
                 250, 
                 MessageType::SetDestination(
@@ -102,7 +162,7 @@ fn default_movement_scenario() -> Scenario {
             )
         ),
         (
-            SignalType::Control,
+            WIFI_2_4GHZ_FREQUENCY,
             Message::new(
                 4000, 
                 MessageType::SetDestination(
@@ -112,7 +172,7 @@ fn default_movement_scenario() -> Scenario {
             )
         ),
         (
-            SignalType::Control,
+            WIFI_2_4GHZ_FREQUENCY,
             Message::new(
                 6000, 
                 MessageType::SetDestination(
@@ -142,43 +202,39 @@ fn derive_filename(config: &Config, text: &str) -> String {
     filename
 }
 
-fn init_drone_vec(drone_count: u32, antenna: AntennaType) -> Vec<Drone> {
-    let mut rng = thread_rng();
+fn init_drone_vec(drone_count: u32, antenna: &AntennaType) -> Vec<Drone> {
+    let mut rng = rand::rng();
 
-    let tx_module = drone_tx_module(antenna);
-    let rx_module = drone_rx_module(antenna);
+    let trx_system = drone_trx_system(antenna);
 
     (1..=drone_count)
         .map(|_| {
             let random_offset = Point3D::new(
-                rng.gen_range(-40.0..40.0),
-                rng.gen_range(-40.0..40.0),
-                rng.gen_range(-20.0..20.0)
+                rng.random_range(-40.0..40.0),
+                rng.random_range(-40.0..40.0),
+                rng.random_range(-20.0..20.0)
             );
             
             let position = DRONE_NETWORK_POSITION + random_offset;
 
             DroneBuilder::new()
                 .set_global_position(position)
-                .set_tx_module(tx_module.clone())
-                .set_rx_module(rx_module.clone())
+                .set_trx_system(trx_system.clone())
                 .build()
         })
         .collect()
 }
 
 fn create_renderer<'a>(
-    output_path: &'a str, 
+    output_path: &'a str,
+    caption: &'a str,
     drone_colorings: &[DroneColoring]
 ) -> PlottersRenderer<'a> {
     PlottersRenderer::new(
         output_path,
+        caption,
         PLOT_RESOLUTION,
-        Axes3DRanges::new(
-            0.0..200.0,
-            0.0..200.0,
-            0.0..200.0,
-        ),
+        Axes3DRanges::default(),
         drone_colorings
     )
 }
@@ -189,61 +245,36 @@ pub fn gps_only(config: &Config) {
 
     let command_center = CommandCenterBuilder::new()
         .set_position(COMMAND_CENTER_POSITION)
-        .set_tx_module(cc_tx_module(antenna))
+        .set_trx_system(cc_trx_system(&antenna))
         .build();
-
-    let drones = init_drone_vec(100, antenna); 
-    
+    let drones = init_drone_vec(100, &antenna); 
     let scenario = Scenario::from([(
-        SignalType::Control,
+        WIFI_2_4GHZ_FREQUENCY,
         Message::new(
             0, 
-            MessageType::SetDestination(
-                Point3D::from(DRONE_DESTINATION),
-                Goal::Attack
-            )
+            MessageType::SetDestination(DRONE_DESTINATION, Goal::Attack)
         ),
     )]);
+    let ewd_gps = ElectronicWarfareBuilder::new()
+        .set_position(Point3D::new(0.0, 5.0, 2.0))
+        .set_trx_system(gps_ewd_trx_system(&antenna))
+        .build();
 
-    let drone_network = match config.network_model {
-        NetworkModelType::CellularAutomaton => {
-            let rwd_gps = CellularAutomatonRWDBuilder::new()
-                .set_position(Point3D::new(0.0, 5.0, 2.0))
-                .set_tx_module(gps_rwd_tx_module(AntennaType::Color))
-                .build();
-
-            NetworkModel::CellularAutomaton(
-                CellularAutomatonBuilder::new()
-                    .set_command_center(command_center)
-                    .set_drones(&drones)
-                    .set_radar_warfare_devices(&[rwd_gps])
-                    .set_topology(config.topology)
-                    .set_scenario(scenario)
-                    .build()
-            )
-        },
-        NetworkModelType::ComplexNetwork(delay_multiplier) => {
-            let rwd_gps = ComplexNetworkRWDBuilder::new()
-                .set_position(Point3D::new(0.0, 5.0, 2.0))
-                .set_tx_module(gps_rwd_tx_module(AntennaType::Strength))
-                .build();
-
-            NetworkModel::ComplexNetwork(
-                ComplexNetworkBuilder::new()
-                    .set_command_center(command_center)
-                    .set_drones(&drones)
-                    .set_radar_warfare_devices(&vec![rwd_gps])
-                    .set_topology(config.topology)
-                    .set_scenario(scenario)
-                    .set_delay_multiplier(delay_multiplier)
-                    .build()
-            )
-        }
-    };
+    let drone_network = NetworkModelBuilder::new(config.network_model)
+        .set_command_center(command_center)
+        .set_drones(&drones)
+        .set_electronic_warfare_devices(&[ewd_gps])
+        .set_topology(config.topology)
+        .set_scenario(scenario)
+        .build();
 
     let output_path = derive_filename(config, "gps_only");
     let drone_colorings = vec![DroneColoring::SingleColor(0, 0, 0)]; 
-    let renderer = create_renderer(&output_path, &drone_colorings);
+    let renderer = create_renderer(
+        &output_path, 
+        &config.plot_caption,
+        &drone_colorings
+    );
 
     let mut simulation = Simulation::new(
         END_TIME,
@@ -259,69 +290,40 @@ pub fn gps_and_control(config: &Config) {
 
     let command_center = CommandCenterBuilder::new()
         .set_position(COMMAND_CENTER_POSITION)
-        .set_tx_module(cc_tx_module(antenna))
+        .set_trx_system(cc_trx_system(&antenna))
         .build();
-    
-    let drones = init_drone_vec(100, antenna); 
-
+    let drones = init_drone_vec(100, &antenna); 
     let scenario = Scenario::from([(
-        SignalType::Control,
+        WIFI_2_4GHZ_FREQUENCY,
         Message::new(
             0, 
-            MessageType::SetDestination(
-                Point3D::from(DRONE_DESTINATION),
-                Goal::Attack
-            )
+            MessageType::SetDestination(DRONE_DESTINATION, Goal::Attack)
         )
     )]);
+    let ewd_control = ElectronicWarfareBuilder::new()
+        .set_position(Point3D::new(-10.0, 2.0, 0.0))
+        .set_trx_system(control_ewd_trx_system(&antenna))
+        .build();
+    let ewd_gps = ElectronicWarfareBuilder::new()
+        .set_position(Point3D::new(0.0, 5.0, 2.0))
+        .set_trx_system(gps_ewd_trx_system(&antenna))
+        .build();
 
-    let drone_network = match config.network_model {
-        NetworkModelType::CellularAutomaton => {
-            let rwd_control = CellularAutomatonRWDBuilder::new()
-                .set_position(Point3D::new(-10.0, 2.0, 0.0))
-                .set_tx_module(control_rwd_tx_module(AntennaType::Color))
-                .build();
-            let rwd_gps = CellularAutomatonRWDBuilder::new()
-                .set_position(Point3D::new(0.0, 5.0, 2.0))
-                .set_tx_module(gps_rwd_tx_module(AntennaType::Color))
-                .build();
-
-            NetworkModel::CellularAutomaton(
-                CellularAutomatonBuilder::new()
-                    .set_command_center(command_center)
-                    .set_drones(&drones)
-                    .set_radar_warfare_devices(&vec![rwd_control, rwd_gps])
-                    .set_topology(config.topology)
-                    .set_scenario(scenario)
-                    .build()
-            )
-        },
-        NetworkModelType::ComplexNetwork(delay_multiplier) => {
-            let rwd_control = ComplexNetworkRWDBuilder::new()
-                .set_position(Point3D::new(-10.0, 2.0, 0.0))
-                .set_tx_module(control_rwd_tx_module(AntennaType::Strength))
-                .build();
-            let rwd_gps = ComplexNetworkRWDBuilder::new()
-                .set_position(Point3D::new(0.0, 5.0, 2.0))
-                .set_tx_module(gps_rwd_tx_module(AntennaType::Strength))
-                .build();
-
-            NetworkModel::ComplexNetwork(
-                ComplexNetworkBuilder::new()
-                    .set_command_center(command_center)
-                    .set_drones(&drones)
-                    .set_radar_warfare_devices(&vec![rwd_control, rwd_gps])
-                    .set_topology(config.topology)
-                    .set_scenario(scenario)
-                    .set_delay_multiplier(delay_multiplier)
-                    .build()
-            )
-        }
-    };
+    let drone_network = NetworkModelBuilder::new(config.network_model)
+        .set_command_center(command_center)
+        .set_drones(&drones)
+        .set_electronic_warfare_devices(&vec![ewd_control, ewd_gps])
+        .set_topology(config.topology)
+        .set_scenario(scenario)
+        .build();
  
     let output_path = derive_filename(config, "gps_and_control");
     let drone_colorings = vec![DroneColoring::SingleColor(0, 0, 0)]; 
-    let renderer = create_renderer(&output_path, &drone_colorings);
+    let renderer = create_renderer(
+        &output_path, 
+        &config.plot_caption,
+        &drone_colorings
+    );
     
     let mut simulation = Simulation::new(
         10000,
@@ -333,42 +335,35 @@ pub fn gps_and_control(config: &Config) {
 }
 
 pub fn command_delay(config: &Config) {
-    let delay_multiplier = config.delay_multiplier();
     let antenna = config.antenna();
 
     let command_center = CommandCenterBuilder::new()
         .set_position(COMMAND_CENTER_POSITION)
-        .set_tx_module(cc_tx_module(antenna))
+        .set_trx_system(cc_trx_system(&antenna))
         .build();
-
-    let drones = init_drone_vec(100, antenna); 
-
+    let drones = init_drone_vec(100, &antenna); 
     let scenario = default_movement_scenario(); 
 
     let mut drone_networks = Vec::new();
 
     if config.display_delayless_network {
-        let delayless_drone_network = NetworkModel::ComplexNetwork(
-            ComplexNetworkBuilder::new()
+        let delayless_drone_network = NetworkModelBuilder::new(
+                NetworkModelType::ComplexNetwork(0.0)
+            )
                 .set_command_center(command_center.clone())
                 .set_drones(&drones)
                 .set_topology(config.topology)
                 .set_scenario(scenario.clone())
-                .build()
-        );
+                .build();
 
         drone_networks.push(delayless_drone_network);
     }
-
-    let drone_network = NetworkModel::ComplexNetwork(
-        ComplexNetworkBuilder::new()
-            .set_command_center(command_center)
-            .set_drones(&drones)
-            .set_topology(config.topology)
-            .set_scenario(scenario)
-            .set_delay_multiplier(delay_multiplier)
-            .build()
-    );
+    let drone_network = NetworkModelBuilder::new(config.network_model)
+        .set_command_center(command_center)
+        .set_drones(&drones)
+        .set_topology(config.topology)
+        .set_scenario(scenario)
+        .build();
     
     drone_networks.insert(0, drone_network);
 
@@ -377,7 +372,11 @@ pub fn command_delay(config: &Config) {
         DroneColoring::SingleColor(0, 0, 0),
         DroneColoring::SingleColor(255, 0, 0)
     ];
-    let renderer = create_renderer(&output_path, &drone_colorings);
+    let renderer = create_renderer(
+        &output_path, 
+        &config.plot_caption,
+        &drone_colorings
+    );
 
     let mut simulation = Simulation::new(
         END_TIME,
@@ -393,40 +392,25 @@ pub fn signal_color(config: &Config) {
 
     let command_center = CommandCenterBuilder::new()
         .set_position(COMMAND_CENTER_POSITION)
-        .set_tx_module(cc_tx_module(antenna))
+        .set_trx_system(cc_trx_system(&antenna))
         .build();
-
-    let drones = init_drone_vec(100, antenna); 
-
+    let drones = init_drone_vec(100, &antenna); 
     let scenario = default_movement_scenario(); 
 
-    let drone_network = match config.network_model {
-        NetworkModelType::CellularAutomaton => {
-            NetworkModel::CellularAutomaton(
-                CellularAutomatonBuilder::new()
-                    .set_command_center(command_center)
-                    .set_drones(&drones)
-                    .set_topology(config.topology)
-                    .set_scenario(scenario)
-                    .build()
-            )
-        },
-        NetworkModelType::ComplexNetwork(delay_multiplier) => {
-            NetworkModel::ComplexNetwork(
-                ComplexNetworkBuilder::new()
-                    .set_command_center(command_center)
-                    .set_drones(&drones)
-                    .set_topology(config.topology)
-                    .set_scenario(scenario)
-                    .set_delay_multiplier(delay_multiplier)
-                    .build()
-            )
-        }
-    };
+    let drone_network = NetworkModelBuilder::new(config.network_model)
+        .set_command_center(command_center)
+        .set_drones(&drones)
+        .set_topology(config.topology)
+        .set_scenario(scenario)
+        .build();
 
     let output_path = derive_filename(config, "signal_color");
     let drone_colorings = vec![DroneColoring::Signal];
-    let renderer = create_renderer(&output_path, &drone_colorings);
+    let renderer = create_renderer(
+        &output_path, 
+        &config.plot_caption,
+        &drone_colorings
+    );
     
     let mut simulation = Simulation::new(
         END_TIME,

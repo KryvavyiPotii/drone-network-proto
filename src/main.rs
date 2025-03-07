@@ -1,10 +1,9 @@
 use std::io::Write;
 
-use chrono;
 use clap::{Command, Arg};
 use env_logger::{Builder, Target};
 
-use device::{modules::AntennaType, networkmodel::Topology};
+use device::networkmodel::{Topology, NetworkModelType};
 
 
 pub mod communication;
@@ -46,6 +45,7 @@ fn cli() {
         match num {
             1 => examples::gps_only(
                 &Config::new(
+                    "Complex network (Star, GPS EWD)",
                     false,
                     NetworkModelType::ComplexNetwork(0.0),
                     Topology::Star
@@ -53,6 +53,7 @@ fn cli() {
             ),
             2 => examples::gps_and_control(
                 &Config::new(
+                    "Complex network (Star, GPS and Control EWD)",
                     false,
                     NetworkModelType::ComplexNetwork(0.0),
                     Topology::Star
@@ -60,6 +61,7 @@ fn cli() {
             ),
             3 => examples::command_delay(
                 &Config::new(
+                    "Complex network (Star, delays)",
                     true,
                     NetworkModelType::ComplexNetwork(1.0),
                     Topology::Star
@@ -67,6 +69,7 @@ fn cli() {
             ),
             4 => examples::signal_color(
                 &Config::new(
+                    "Complex network (Star, signal color)",
                     false,
                     NetworkModelType::ComplexNetwork(0.0),
                     Topology::Star
@@ -74,6 +77,7 @@ fn cli() {
             ),
             5 => examples::gps_only(
                 &Config::new(
+                    "Complex network (Mesh, GPS EWD)",
                     false,
                     NetworkModelType::ComplexNetwork(0.0),
                     Topology::Mesh
@@ -81,6 +85,7 @@ fn cli() {
             ),
             6 => examples::gps_and_control(
                 &Config::new(
+                    "Complex network (Mesh, GPS and Control EWD)",
                     false,
                     NetworkModelType::ComplexNetwork(0.0),
                     Topology::Mesh
@@ -88,6 +93,7 @@ fn cli() {
             ),
             7 => examples::command_delay(
                 &Config::new(
+                    "Complex network (Mesh, delays)",
                     true,
                     NetworkModelType::ComplexNetwork(1.0),
                     Topology::Mesh
@@ -95,6 +101,7 @@ fn cli() {
             ),
             8 => examples::signal_color(
                 &Config::new(
+                    "Complex network (Mesh, signal color)",
                     false,
                     NetworkModelType::ComplexNetwork(0.0),
                     Topology::Mesh
@@ -102,6 +109,7 @@ fn cli() {
             ),
             9 => examples::gps_only(
                 &Config::new(
+                    "Cellular automaton (Star, GPS EWD)",
                     false,
                     NetworkModelType::CellularAutomaton,
                     Topology::Star
@@ -109,6 +117,7 @@ fn cli() {
             ),
             10 => examples::gps_and_control(
                 &Config::new(
+                    "Cellular automaton (Star, GPS and Control EWD)",
                     false,
                     NetworkModelType::CellularAutomaton,
                     Topology::Star
@@ -116,6 +125,7 @@ fn cli() {
             ),
             11 => examples::signal_color(
                 &Config::new(
+                    "Cellular automaton (Star, signal color)",
                     false,
                     NetworkModelType::CellularAutomaton,
                     Topology::Star
@@ -123,6 +133,7 @@ fn cli() {
             ),
             12 => examples::gps_only(
                 &Config::new(
+                    "Cellular automaton (Mesh, GPS EWD)",
                     false,
                     NetworkModelType::CellularAutomaton,
                     Topology::Mesh
@@ -130,6 +141,7 @@ fn cli() {
             ),
             13 => examples::gps_and_control(
                 &Config::new(
+                    "Cellular automaton (Mesh, GPS and Control EWD)",
                     false,
                     NetworkModelType::CellularAutomaton,
                     Topology::Mesh
@@ -137,6 +149,7 @@ fn cli() {
             ),
             14 => examples::signal_color(
                 &Config::new(
+                    "Cellular automaton (Mesh, signal color)",
                     false,
                     NetworkModelType::CellularAutomaton,
                     Topology::Mesh
@@ -148,30 +161,36 @@ fn cli() {
 }
 
 
-pub enum NetworkModelType {
-    CellularAutomaton,
-    ComplexNetwork(f32) // delay
+pub enum AntennaType {
+    Color,
+    Strength
 }
 
+
 pub struct Config {
+    plot_caption: String,
     display_delayless_network: bool, 
     network_model: NetworkModelType,
     topology: Topology,
 }
 
 impl Config {
+    #[must_use]
     pub fn new(
+        plot_caption: &str,
         display_delayless_network: bool,
         network_model: NetworkModelType,
         topology: Topology
     ) -> Self {
-        Self { 
+        Self {
+            plot_caption: plot_caption.to_string(),
             display_delayless_network,
             network_model,
             topology
         }
     }
 
+    #[must_use]
     pub fn antenna(&self) -> AntennaType {
         match self.network_model {
             NetworkModelType::CellularAutomaton => AntennaType::Color,
@@ -179,11 +198,12 @@ impl Config {
         }
     }
 
+    #[must_use]
     pub fn delay_multiplier(&self) -> f32 {
         match self.network_model {
             NetworkModelType::ComplexNetwork(delay_multiplier) =>
                 delay_multiplier,
-            _ => 0.0
+            NetworkModelType::CellularAutomaton => 0.0
         }
     }
 }
