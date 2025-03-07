@@ -1,6 +1,6 @@
 # drone-network
 
-A trait that aims to model a network of drones.
+A crate that aims to model a network of drones.
 
 ## Render legend
 
