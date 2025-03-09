@@ -31,6 +31,8 @@ pub enum TRXModuleBuildError {
 pub enum ReceiveMessageError {
     #[error("Message execution cost is too high")]
     TooExpensive,
+    #[error("Message destination ID does not match device ID")]
+    WrongDestination,
 }
 
 
@@ -411,10 +413,10 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::communication::{
-        Goal, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, MessageType, 
-        RED_SIGNAL_LEVEL, SignalStrength, YELLOW_SIGNAL_LEVEL, 
-        WIFI_2_4GHZ_FREQUENCY
-    };
+        Goal, MessageType, SignalStrength, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
+        RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY, YELLOW_SIGNAL_LEVEL
+    }; 
+    use crate::device::UNKNOWN_ID;
 
     use super::*;
 
@@ -546,7 +548,12 @@ mod tests {
     #[test]
     fn receive_message_on_strength_trx_system() {
         let frequency = GPS_L1_FREQUENCY;
-        let message = Message::new(0, MessageType::ChangeGoal(Goal::Attack));
+        let message = Message::new(
+            UNKNOWN_ID,
+            UNKNOWN_ID,
+            0, 
+            MessageType::ChangeGoal(Goal::Attack)
+        );
 
         let barely_green_signal_level = 
             YELLOW_SIGNAL_LEVEL + SignalStrength::new(0.1);
@@ -573,7 +580,12 @@ mod tests {
     #[test]
     fn not_receive_too_expensive_message() {
         let frequency = GPS_L1_FREQUENCY;
-        let message = Message::new(0, MessageType::ChangeGoal(Goal::Attack));
+        let message = Message::new(
+            UNKNOWN_ID,
+            UNKNOWN_ID,
+            0, 
+            MessageType::ChangeGoal(Goal::Attack)
+        );
 
         let mut strength_rx_system = TRXSystem::Strength {
             tx_module: TRXModule::default(),
@@ -594,7 +606,12 @@ mod tests {
     #[test]
     fn receive_message_on_color_trx_system() {
         let frequency = GPS_L1_FREQUENCY;
-        let message = Message::new(0, MessageType::ChangeGoal(Goal::Attack));
+        let message = Message::new(
+            UNKNOWN_ID,
+            UNKNOWN_ID,
+            0, 
+            MessageType::ChangeGoal(Goal::Attack)
+        );
         
         let barely_green_signal_level = 
             YELLOW_SIGNAL_LEVEL + SignalStrength::new(1.0);

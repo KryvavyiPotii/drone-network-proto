@@ -7,8 +7,8 @@ use crate::communication::{
 use crate::device::{
     CommandCenter, Device, DeviceId, Receiver, STEP_DURATION, Transceiver, 
     Transmitter, UNKNOWN_ID, generate_device_id,
-    modules::{ReceiveMessageError, TRXSystem}
 };
+use crate::device::modules::{ReceiveMessageError, TRXSystem};
 use crate::mathphysics::{
     Megahertz, Meter, MeterPerSecond, Point3D, Position, Vector3D, 
     equation_of_motion_3d, millis_to_secs, 
@@ -169,13 +169,14 @@ impl Drone {
         &mut self, 
         frequency: Megahertz, 
         message: &Message
-    ) {
-        if self
-            .receive_message(frequency, message)
-            .is_err()
-        {
-            return;   
+    ) -> Result<(), ReceiveMessageError> {
+        let destination_id = message.destination_id();
+
+        if destination_id != UNKNOWN_ID && self.id() != destination_id {
+            return Err(ReceiveMessageError::WrongDestination);
         }
+
+        self.receive_message(frequency, message)?;
 
         match message.message_type() {
             MessageType::SetDestination(destination, goal) => {
@@ -186,6 +187,8 @@ impl Drone {
                 self.goal = *goal;
             }
         };
+
+        Ok(())
     }
 
     pub fn update_state(&mut self) {
@@ -394,3 +397,132 @@ impl Receiver for Drone {
 }
 
 impl Transceiver for Drone {}
+
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::device::modules::TRXModule;
+
+    use super::*;
+
+
+    fn drone_green_rx_module(frequency: Megahertz) -> TRXModule {
+        let max_rx_signal_levels = HashMap::from([
+            (frequency, GREEN_SIGNAL_LEVEL)
+        ]);
+        let rx_signal_levels = HashMap::from([
+            (frequency, GREEN_SIGNAL_LEVEL)
+        ]);
+
+        TRXModule::build(
+            max_rx_signal_levels,
+            rx_signal_levels,
+        ).unwrap()   
+    }
+
+    fn drone_green_rx_system(frequency: Megahertz) -> TRXSystem {
+        TRXSystem::Color(drone_green_rx_module(frequency))
+    }
+
+
+    #[test]
+    fn drone_movement_without_gps() {
+        let destination_point = Point3D::new(MAX_DRONE_SPEED, 0.0, 0.0);
+        
+        let mut drone_without_gps = DroneBuilder::new()
+            .set_destination(destination_point)
+            .build();
+
+        for _ in (0..1000).step_by(STEP_DURATION as usize) {
+            drone_without_gps.update_state();
+        }
+
+        assert_eq!(
+            *drone_without_gps.position_without_gps(), 
+            Point3D::default()
+        );
+        assert_eq!(
+            *drone_without_gps.position(), 
+            destination_point
+        );
+    }
+
+    #[test]
+    fn drone_reach_destination() {
+        let destination_point = Point3D::new(MAX_DRONE_SPEED, 0.0, 0.0);
+        
+        let mut drone = DroneBuilder::new()
+            .set_destination(destination_point)
+            .build();
+
+        for _ in (0..1000).step_by(STEP_DURATION as usize) {
+            drone.update_state();
+        }
+
+        assert!(drone.reached_destination());
+    }
+
+    #[test]
+    fn process_correct_message() {
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
+
+        let mut drone = DroneBuilder::new()
+            .set_trx_system(drone_green_rx_system(frequency))
+            .build();
+        
+        let message = Message::new(
+            drone.id(),
+            drone.id(),
+            0, 
+            MessageType::ChangeGoal(Goal::Attack)
+        );
+
+        let _ = drone.process_message(frequency, &message);
+
+        assert!(matches!(drone.goal, Goal::Attack));
+    }
+
+    #[test]
+    fn process_broadcast_message() {
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let message = Message::new(
+            UNKNOWN_ID,
+            UNKNOWN_ID,
+            0, 
+            MessageType::ChangeGoal(Goal::Attack)
+        );
+
+        let mut drone = DroneBuilder::new()
+            .set_trx_system(drone_green_rx_system(frequency))
+            .build();
+
+        let _ = drone.process_message(frequency, &message);
+
+        assert!(matches!(drone.goal, Goal::Attack));
+    }
+
+    #[test]
+    fn process_message_with_wrong_destination() {
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
+
+        let mut drone = DroneBuilder::new()
+            .set_trx_system(drone_green_rx_system(frequency))
+            .build();
+        
+        let message = Message::new(
+            drone.id() + 1,
+            drone.id() + 1,
+            0, 
+            MessageType::ChangeGoal(Goal::Attack)
+        );
+
+        assert!(
+            matches!(
+                drone.process_message(frequency, &message),
+                Err(ReceiveMessageError::WrongDestination)
+            )
+        );
+    }
+}

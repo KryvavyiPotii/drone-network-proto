@@ -5,11 +5,9 @@ use crate::communication::{
 };
 use crate::device::{
     Device, DeviceId, Receiver, Transceiver, Transmitter, generate_device_id,
-    modules::{ReceiveMessageError, TRXSystem}
 };
-use crate::mathphysics::{
-    Megahertz, Meter, Point3D, Position, 
-};
+use crate::device::modules::{ReceiveMessageError, TRXSystem};
+use crate::mathphysics::{Megahertz, Meter, Point3D, Position};
 
 
 pub struct CommandCenterBuilder {

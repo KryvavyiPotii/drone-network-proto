@@ -1,20 +1,19 @@
 use std::collections::{HashMap, hash_map::Values};
 
 use crate::device::{
-    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, STEP_DURATION, 
-    Suppressor, Transceiver, Transmitter,
-    networkmodel::{
-        ConnectionGraph, FindSignalLevel, IdToDroneMap, IdToLevelMap, 
-        MessagePreprocessError, Topology, try_preprocess_message
-    }
+    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, Suppressor, 
+    Transceiver, Transmitter, STEP_DURATION, UNKNOWN_ID,
 };
+use crate::device::networkmodel::{
+    ConnectionGraph, FindSignalLevel, IdToDroneMap, IdToLevelMap, Topology
+}; 
 use crate::mathphysics::{
     Megahertz, Meter, Millisecond, Point3D, SPEED_OF_LIGHT, kmps_to_mpms,
     time_in_millis_from_distance_and_speed
 };
 use crate::communication::{
-    GPS_L1_FREQUENCY, Message, MessageType, NO_SIGNAL_LEVEL, Scenario, 
-    WIFI_2_4GHZ_FREQUENCY
+    GPS_L1_FREQUENCY, Message, MessagePreprocessError, MessageType, 
+    NO_SIGNAL_LEVEL, Scenario, WIFI_2_4GHZ_FREQUENCY
 };
 
 
@@ -27,7 +26,48 @@ const DELAY_DISTANCE_COEFFICIENT: f32 = 1_500_000.0;
 // Making this function a method of ComplexNetwork and calling it from 
 // ComplexNetwork::process_message_queue() is impossible due to having mutable
 // and immutable references to self simultaneously.
-fn forward_message_to_drones(
+fn send_message(
+    drone_map: &mut IdToDroneMap,
+    frequency: Megahertz,
+    delays_snapshot: &DelaySnapshot,
+    message: &Message,
+    current_time: Millisecond
+) {
+    let destination_id = message.destination_id();
+
+    if destination_id == UNKNOWN_ID {
+        broadcast_message(
+            drone_map,
+            frequency,
+            delays_snapshot,
+            message,
+            current_time
+        );
+    } else {
+        let Some(drone) = drone_map.get_mut(&destination_id) else {
+            return;
+        };
+        let Some(delay) = delays_snapshot.get(&drone.id()) else {
+            return;
+        };
+
+        unicast_message(drone, frequency, *delay, message, current_time);
+    }
+}
+
+fn unicast_message(
+    drone: &mut Drone,
+    frequency: Megahertz,
+    delay: Millisecond,
+    message: &Message,
+    current_time: Millisecond
+) {
+    if current_time >= message.time() + delay {
+        let _ = drone.process_message(frequency, message);
+    }
+}
+
+fn broadcast_message(
     drone_map: &mut IdToDroneMap,
     frequency: Megahertz,
     delays_snapshot: &DelaySnapshot,
@@ -35,11 +75,11 @@ fn forward_message_to_drones(
     current_time: Millisecond
 ) {
     for drone in drone_map.drones_mut() {
-        if let Some(delay) = delays_snapshot.get(&drone.id()) {
-            if current_time >= message.time() + delay {
-                drone.process_message(frequency, message);
-            }
-        }
+        let Some(delay) = delays_snapshot.get(&drone.id()) else {
+            continue;
+        };
+
+        unicast_message(drone, frequency, *delay, message, current_time);
     }
 }
 
@@ -250,8 +290,14 @@ impl ComplexNetwork {
         let delays = self.delays();
 
         for (frequency, message, delays_snapshot) in &mut self.message_queue {
-            match try_preprocess_message(self.current_time, message) {
-                Err(MessagePreprocessError::TooEarly) => continue, 
+            match message.try_preprocess(
+                self.current_time, 
+                &self.connections
+            ) {
+                Err(
+                    MessagePreprocessError::TooEarly
+                    | MessagePreprocessError::UnknownSource
+                ) => continue, 
                 Err(MessagePreprocessError::AlreadyPreprocessed) => (),
                 Ok(()) =>  {
                     delays_snapshot.clone_from(&delays);
@@ -264,7 +310,7 @@ impl ComplexNetwork {
                 }
             }
             
-            forward_message_to_drones(
+            send_message(
                 &mut self.drone_map,
                 *frequency,
                 delays_snapshot,
@@ -346,10 +392,8 @@ mod tests {
         GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, RED_SIGNAL_LEVEL, 
         SignalArea, SignalLevel, YELLOW_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
     };
-    use crate::device::{
-        CommandCenterBuilder, DroneBuilder,
-        modules::{TRXModule, TRXSystem}
-    };
+    use crate::device::{CommandCenterBuilder, DroneBuilder};
+    use crate::device::modules::{TRXModule, TRXSystem};
     use crate::mathphysics::Meter;
     
     use super::*;

@@ -1,15 +1,11 @@
-use std::{
-    ops::Range,
-    sync::{Arc, atomic::{AtomicBool, Ordering}}
-};
+use std::ops::Range;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use full_palette::GREY;
 use log::{info, trace};
-use plotters::{
-    coord::{ranged3d::Cartesian3d, types::RangedCoordf64, Shift}, 
-    prelude::*,
-    style::RGBColor
-};
+use plotters::coord::{ranged3d::Cartesian3d, types::RangedCoordf64, Shift};
+use plotters::prelude::*;
+use plotters::style::RGBColor;
 use thiserror::Error;
 
 use crate::communication::{
@@ -18,7 +14,9 @@ use crate::communication::{
 use crate::device::{
     CommandCenter, DESTINATION_RADIUS, Drone, ElectronicWarfare, STEP_DURATION, 
     Transceiver, Transmitter, 
-    networkmodel::{NetworkModel, get_drone_networks_destinations}
+};
+use crate::device::networkmodel::{
+    NetworkModel, get_drone_networks_destinations
 };
 use crate::mathphysics::{Megahertz, Meter, Millisecond, Point3D, Position};
 

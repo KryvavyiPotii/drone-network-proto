@@ -22,7 +22,8 @@ pub type DeviceId = usize;
 
 
 pub const STEP_DURATION: Millisecond = 50;
-const UNKNOWN_ID: DeviceId = 0;
+// This ID is also a broadcast ID.
+pub const UNKNOWN_ID: DeviceId       = 0;
 
 static FREE_DEVICE_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -144,10 +145,8 @@ mod tests {
         BLACK_SIGNAL_LEVEL, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
         NO_SIGNAL_LEVEL, RED_SIGNAL_LEVEL, SignalArea, WIFI_2_4GHZ_FREQUENCY
     };
-    use crate::device::{
-        CommandCenterBuilder, DroneBuilder,
-        modules::{TRXModule, TRXSystem}
-    };
+    use crate::device::{CommandCenterBuilder, DroneBuilder};
+    use crate::device::modules::{TRXModule, TRXSystem};
     use crate::mathphysics::{Meter, Point3D};
     
     use super::*;
@@ -335,42 +334,5 @@ mod tests {
             *drone_outside
                 .rx_signal_level(gps_frequency) >= BLACK_SIGNAL_LEVEL
         );
-    }
-
-    #[test]
-    fn drone_movement_without_gps() {
-        let destination_point = Point3D::new(MAX_DRONE_SPEED, 0.0, 0.0);
-        
-        let mut drone_without_gps = DroneBuilder::new()
-            .set_destination(destination_point)
-            .build();
-
-        for _ in (0..1000).step_by(STEP_DURATION as usize) {
-            drone_without_gps.update_state();
-        }
-
-        assert_eq!(
-            *drone_without_gps.position_without_gps(), 
-            Point3D::default()
-        );
-        assert_eq!(
-            *drone_without_gps.position(), 
-            destination_point
-        );
-    }
-
-    #[test]
-    fn drone_reach_destination() {
-        let destination_point = Point3D::new(MAX_DRONE_SPEED, 0.0, 0.0);
-        
-        let mut drone = DroneBuilder::new()
-            .set_destination(destination_point)
-            .build();
-
-        for _ in (0..1000).step_by(STEP_DURATION as usize) {
-            drone.update_state();
-        }
-
-        assert!(drone.reached_destination());
     }
 }

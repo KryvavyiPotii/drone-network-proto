@@ -2,21 +2,18 @@ use std::collections::hash_map::Values;
 
 use rand::prelude::*;
 
+use crate::communication::{
+    GPS_L1_FREQUENCY, Message, MessagePreprocessError, MessageQueue, 
+    MessageType, NO_SIGNAL_LEVEL, Scenario, SignalLevel, WIFI_2_4GHZ_FREQUENCY
+};
 use crate::device::{
     CommandCenter, DeviceId, Drone, ElectronicWarfare, Receiver, 
-    STEP_DURATION, Suppressor, Transceiver, Transmitter,
-    networkmodel::{
-        ConnectionGraph, IdToDroneMap, IdToLevelMap, MessagePreprocessError,
-        Topology, try_preprocess_message
-    }
+    STEP_DURATION, Suppressor, Transceiver, Transmitter, UNKNOWN_ID,
+};
+use crate::device::networkmodel::{
+    ConnectionGraph, FindSignalLevel, IdToDroneMap, IdToLevelMap, Topology
 };
 use crate::mathphysics::{Megahertz, Millisecond, Point3D};
-use crate::communication::{
-    GPS_L1_FREQUENCY, Message, MessageQueue, MessageType, NO_SIGNAL_LEVEL, 
-    Scenario, SignalLevel, WIFI_2_4GHZ_FREQUENCY
-};
-
-use super::FindSignalLevel;
 
 
 const CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY: f32  = 0.95;
@@ -25,7 +22,6 @@ const CHANGE_SIGNAL_LEVEL_FROM_RED_PROBABILITY: f32    = 0.50;
 const CHANGE_SIGNAL_LEVEL_FROM_BLACK_PROBABILITY: f32  = 0.0;
 
 
-// TODO make like effective_propagated_signal
 fn suppress_with_probability<S, R>(
     tx: &S,
     rx: &mut R,
@@ -89,13 +85,31 @@ fn signal_level_change_probability(signal_level: SignalLevel) -> f32 {
     }
 }
 
-fn forward_message_to_drones(
+fn send_message(
+    drone_map: &mut IdToDroneMap,
+    frequency: Megahertz,
+    message: &Message,
+) {
+    let destination_id = message.destination_id();
+
+    if destination_id == UNKNOWN_ID {
+        broadcast_message(drone_map, frequency, message);
+    } else {
+        let Some(drone) = drone_map.get_mut(&destination_id) else {
+            return;
+        };
+
+        let _ = drone.process_message(frequency, message);
+    }
+}
+
+fn broadcast_message(
     drone_map: &mut IdToDroneMap,
     frequency: Megahertz,
     message: &Message,
 ) {
     for drone in drone_map.drones_mut() {
-        drone.process_message(frequency, message);
+        let _ = drone.process_message(frequency, message);
     }
 }
 
@@ -221,8 +235,14 @@ impl CellularAutomaton {
         }
         
         for (frequency, message) in &mut self.message_queue {
-            match try_preprocess_message(self.current_time, message) {
-                Err(MessagePreprocessError::TooEarly) => continue, 
+            match message.try_preprocess(
+                self.current_time, 
+                &self.connections
+            ) {
+                Err(
+                    MessagePreprocessError::TooEarly
+                    | MessagePreprocessError::UnknownSource
+                ) => continue, 
                 Err(MessagePreprocessError::AlreadyPreprocessed) => (),
                 Ok(()) =>
                     match message.message_type() {
@@ -232,11 +252,7 @@ impl CellularAutomaton {
                     }
             }
             
-            forward_message_to_drones(
-                &mut self.drone_map, 
-                *frequency,
-                message 
-            );
+            send_message(&mut self.drone_map, *frequency, message);
             
             message.finish();
         }
@@ -285,10 +301,8 @@ mod tests {
         GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE,
         SignalArea
     };
-    use crate::device::{
-        CommandCenterBuilder, Device, DroneBuilder,
-        modules::{TRXModule, TRXSystem}
-    };
+    use crate::device::{CommandCenterBuilder, Device, DroneBuilder};
+    use crate::device::modules::{TRXModule, TRXSystem};
     use crate::mathphysics::Meter;
     
     use super::*;

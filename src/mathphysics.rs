@@ -1,11 +1,11 @@
 pub use point::Point3D;
-pub use vector::Vector3D;
 pub use unit::*;
+pub use vector::Vector3D;
 
 
 pub mod point;
-pub mod vector;
 pub mod unit;
+pub mod vector;
 
 
 pub const INVALID_POSITION: Point3D = Point3D { 

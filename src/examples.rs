@@ -9,10 +9,13 @@ use crate::communication::{
     WIFI_2_4GHZ_FREQUENCY
 };
 use crate::device::{
-    CommandCenterBuilder, Drone, DroneBuilder, ElectronicWarfareBuilder, 
-    networkmodel::{NetworkModelBuilder, NetworkModelType, Topology}, 
-    modules::{TRXModule, TRXSystem}
+    CommandCenterBuilder, Device, DeviceId, Drone, DroneBuilder, 
+    ElectronicWarfareBuilder, UNKNOWN_ID,
 };
+use crate::device::networkmodel::{
+    NetworkModelBuilder, NetworkModelType, Topology
+}; 
+use crate::device::modules::{TRXModule, TRXSystem};
 use crate::mathphysics::Point3D;
 use crate::simulation::{
     Axes3DRanges, DroneColoring, END_TIME, PlottersRenderer, Simulation
@@ -142,11 +145,13 @@ fn control_ewd_trx_system(antenna: &AntennaType) -> TRXSystem {
     }
 }
 
-fn default_movement_scenario() -> Scenario {
+fn default_movement_scenario(command_center_id: DeviceId) -> Scenario {
     Scenario::from([
         (
             WIFI_2_4GHZ_FREQUENCY,
             Message::new(
+                command_center_id,
+                UNKNOWN_ID,
                 0, 
                 MessageType::SetDestination(DRONE_DESTINATION, Goal::Attack)
             )
@@ -154,6 +159,8 @@ fn default_movement_scenario() -> Scenario {
         (
             WIFI_2_4GHZ_FREQUENCY,
             Message::new(
+                command_center_id,
+                UNKNOWN_ID,
                 250, 
                 MessageType::SetDestination(
                     Point3D::new(0.0, 0.0, 150.0),
@@ -164,6 +171,8 @@ fn default_movement_scenario() -> Scenario {
         (
             WIFI_2_4GHZ_FREQUENCY,
             Message::new(
+                command_center_id,
+                UNKNOWN_ID,
                 4000, 
                 MessageType::SetDestination(
                     Point3D::new(0.0, 150.0, 150.0),
@@ -174,6 +183,8 @@ fn default_movement_scenario() -> Scenario {
         (
             WIFI_2_4GHZ_FREQUENCY,
             Message::new(
+                command_center_id,
+                UNKNOWN_ID,
                 6000, 
                 MessageType::SetDestination(
                     DRONE_DESTINATION,
@@ -251,6 +262,8 @@ pub fn gps_only(config: &Config) {
     let scenario = Scenario::from([(
         WIFI_2_4GHZ_FREQUENCY,
         Message::new(
+            command_center.id(),
+            UNKNOWN_ID,
             0, 
             MessageType::SetDestination(DRONE_DESTINATION, Goal::Attack)
         ),
@@ -296,6 +309,8 @@ pub fn gps_and_control(config: &Config) {
     let scenario = Scenario::from([(
         WIFI_2_4GHZ_FREQUENCY,
         Message::new(
+            command_center.id(),
+            UNKNOWN_ID,
             0, 
             MessageType::SetDestination(DRONE_DESTINATION, Goal::Attack)
         )
@@ -342,7 +357,7 @@ pub fn command_delay(config: &Config) {
         .set_trx_system(cc_trx_system(&antenna))
         .build();
     let drones = init_drone_vec(100, &antenna); 
-    let scenario = default_movement_scenario(); 
+    let scenario = default_movement_scenario(command_center.id()); 
 
     let mut drone_networks = Vec::new();
 
@@ -395,7 +410,7 @@ pub fn signal_color(config: &Config) {
         .set_trx_system(cc_trx_system(&antenna))
         .build();
     let drones = init_drone_vec(100, &antenna); 
-    let scenario = default_movement_scenario(); 
+    let scenario = default_movement_scenario(command_center.id()); 
 
     let drone_network = NetworkModelBuilder::new(config.network_model)
         .set_command_center(command_center)

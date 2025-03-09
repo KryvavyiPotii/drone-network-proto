@@ -1,22 +1,20 @@
-use std::collections::{
-    HashMap,
-    hash_map::{Iter, IterMut, Keys, Values, ValuesMut}
-};
+use std::collections::HashMap;
+use std::collections::hash_map::{Iter, IterMut, Keys, Values, ValuesMut};
 
-use petgraph::{graphmap::GraphMap, visit::EdgeRef, Directed};
-use rustworkx_core::{
-    centrality::betweenness_centrality, 
-    dictmap::DictMap, 
-    shortest_path::{astar, dijkstra}, 
-};
+use petgraph::graphmap::GraphMap; 
+use petgraph::visit::EdgeRef;
+use petgraph::Directed;
+use rustworkx_core::centrality::betweenness_centrality;
+use rustworkx_core::dictmap::DictMap;
+use rustworkx_core::shortest_path::{astar, dijkstra};
 use thiserror::Error;
 
 use crate::device::{
     CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, Receiver,
     Transceiver, Transmitter
 };
-use crate::communication::{Message, NO_SIGNAL_LEVEL, Scenario, SignalLevel};
-use crate::mathphysics::{Megahertz, Meter, Millisecond, Point3D};
+use crate::communication::{NO_SIGNAL_LEVEL, Scenario, SignalLevel};
+use crate::mathphysics::{Megahertz, Meter, Point3D};
 
 
 pub use cellularautomaton::CellularAutomaton;
@@ -44,7 +42,7 @@ pub trait FindSignalLevel {
     /// # Errors
     ///
     /// Will return Err if the first drone on found shortest path is not 
-    /// present in IdToDroneMap. 
+    /// present in `IdToDroneMap`.
     fn try_find_best_signal_levels(
         command_center: &CommandCenter,
         drone_map: &IdToDroneMap,
@@ -107,32 +105,6 @@ pub fn get_drone_networks_destinations(
         .iter()
         .map(NetworkModel::destination)
         .collect()
-}
-
-
-#[derive(Error, Debug)]
-pub enum MessagePreprocessError {
-    #[error("Message execution time is set to be later")]
-    TooEarly,
-    #[error("Message is already preprocessed")]
-    AlreadyPreprocessed
-}
-
-
-fn try_preprocess_message(
-    current_time: Millisecond,
-    message: &mut Message
-) -> Result<(), MessagePreprocessError> {
-    if current_time < message.time() {
-        return Err(MessagePreprocessError::TooEarly);
-    }
-    if message.is_in_progress() {
-        return Err(MessagePreprocessError::AlreadyPreprocessed);
-    }
-
-    message.process();
-
-    Ok(())
 }
 
 
@@ -296,7 +268,6 @@ impl NetworkModelBuilder {
         }
     }
 
-    // TODO allow usage of the same command center for different networks.
     #[must_use]
     pub fn set_command_center(mut self, command_center: CommandCenter) -> Self {
         self.command_center = Some(command_center);
@@ -560,43 +531,35 @@ pub struct ConnectionGraph(GraphMap<DeviceId, Meter, Directed>);
 
 impl ConnectionGraph {
     #[must_use]
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self(GraphMap::new())
     }
 
-    fn add_connection(
-        &mut self, 
-        a: DeviceId, 
-        b: DeviceId, 
-        weight: Meter
-    ) -> Option<Meter> {
-        self.0.add_edge(a, b, weight)
+    #[must_use]
+    pub fn contains_device(&self, node: DeviceId) -> bool {
+        self.0.contains_node(node)
     }
 
-    fn add_device(&mut self, node: DeviceId) -> DeviceId {
-        self.0.add_node(node)
-    }
-
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.0.clear();
     }
 
-    fn update(
+    pub fn update<T: Transmitter>(
         &mut self, 
-        command_center: &CommandCenter,
+        command_device: &T,
         drone_map: &IdToDroneMap,
         topology: Topology,
         frequency: Megahertz
     ) {
         self.clear();
        
-        // The drones in the command center area repeat the signal to each
+        // The drones in the command device area forward the signal to each
         // other and the drones outside the area.
         // If there are no drones inside then the drones outside can not get 
         // any signal.
         // So, it is pointless to continue computation.
-        if !self.try_connect_drones_directly_to_cc(
-            command_center, 
+        if !self.try_connect_drones_directly_to(
+            command_device, 
             drone_map,
             frequency
         ) {
@@ -607,34 +570,35 @@ impl ConnectionGraph {
             self.try_connect_drones_to_each_other(drone_map, frequency);
         }
     }
- 
-    fn try_connect_drones_directly_to_cc(
+
+    #[must_use]
+    fn try_connect_drones_directly_to<T: Transmitter>(
         &mut self,
-        command_center: &CommandCenter,
+        command_device: &T,
         drone_map: &IdToDroneMap,
         frequency: Megahertz
     ) -> bool {
         let mut connected = false;
-        let cc_node = self.add_device(command_center.id());
+        let command_device_node = self.0.add_node(command_device.id());
         
         for drone in drone_map.drones() {
-            if let Some(distance) = command_center.connection_distance(
+            if let Some(distance) = command_device.connection_distance(
                 drone,
                 frequency
             ) {
-                let node = self.add_device(drone.id());
+                let node = self.0.add_node(drone.id());
                 
-                self.add_connection(cc_node, node, distance);
+                self.0.add_edge(command_device_node, node, distance);
                 
                 connected = true;
             };
             if let Some(distance) = drone.connection_distance(
-                command_center,
+                command_device,
                 frequency
             ) {
-                let node = self.add_device(drone.id());
+                let node = self.0.add_node(drone.id());
                 
-                self.add_connection(node, cc_node, distance);
+                self.0.add_edge(node, command_device_node, distance);
             };
         }
 
@@ -647,31 +611,34 @@ impl ConnectionGraph {
         frequency: Megahertz
     ) {
         for (i, tx_drone) in drone_map.drones().enumerate() {
-            let tx_node = self.add_device(tx_drone.id());
+            let tx_node = self.0.add_node(tx_drone.id());
           
             // Loops are prohibited. 
             // Otherwise, shortest path algorithms will not function properly.
             for rx_drone in drone_map.drones().skip(i + 1) {
-                let rx_node = self.add_device(rx_drone.id());
+                let rx_node = self.0.add_node(rx_drone.id());
         
                 if let Some(distance) = tx_drone.connection_distance(
                     rx_drone,
                     frequency
                 ) {
-                    self.add_connection(tx_node, rx_node, distance);
+                    self.0.add_edge(tx_node, rx_node, distance);
                 }
                 if let Some(distance) = rx_drone.connection_distance(
                     tx_drone,
                     frequency
                 ) {
-                    self.add_connection(rx_node, tx_node, distance);
+                    self.0.add_edge(rx_node, tx_node, distance);
                 }
             }
         }
     }
    
     // Gives shortest distance to a device by distance between devices.
-    fn single_source_dijkstra(
+    /// # Errors
+    ///
+    /// Will never fail.
+    pub fn single_source_dijkstra(
         &self,
         source: DeviceId
     ) -> rustworkx_core::Result<DictMap<DeviceId, f32>> {
@@ -689,7 +656,7 @@ impl ConnectionGraph {
     ///
     /// Will return `Err` if the shortest path algorithm does not find an 
     /// appropriate path.
-    fn find_shortest_path_from_to(
+    pub fn find_shortest_path_from_to(
         &self, 
         source: DeviceId,
         destination: DeviceId 
@@ -713,8 +680,12 @@ impl ConnectionGraph {
         }
     }
     
+    /// # Panics
+    /// 
+    /// Will panic if `rustworkx_core::shortest_path::dijkstra` becomes 
+    /// fallible.
     #[must_use]
-    fn diameter(&self) -> f32 {
+    pub fn diameter(&self) -> f32 {
         let shortest_paths: Vec<DictMap<DeviceId, f32>> = self.0
             .nodes()
             .map(|drone_id|
@@ -732,8 +703,19 @@ impl ConnectionGraph {
     }
 
     #[must_use]
-    fn node_load(&self) -> Vec<Option<f64>> {
+    pub fn node_load(&self) -> Vec<Option<f64>> {
         betweenness_centrality(&self.0, true, true, 50)
+    }
+
+    #[must_use]
+    pub fn percolation_centrality(&self) -> Vec<Option<f64>> {
+        todo!()
+    }
+}
+
+impl Default for ConnectionGraph {
+    fn default() -> Self {
+        Self(GraphMap::new())
     }
 }
 
@@ -751,12 +733,10 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::communication::{
-        Goal, GREEN_SIGNAL_LEVEL, MessageType, SignalArea, WIFI_2_4GHZ_FREQUENCY
+        GREEN_SIGNAL_LEVEL, SignalArea, WIFI_2_4GHZ_FREQUENCY
     };
-    use crate::device::{
-        CommandCenterBuilder, DroneBuilder,
-        modules::{TRXModule, TRXSystem}
-    };
+    use crate::device::{CommandCenterBuilder, DroneBuilder};
+    use crate::device::modules::{TRXModule, TRXSystem};
     
     use super::*;
     
@@ -814,39 +794,6 @@ mod tests {
             .build()
     }
 
-
-    #[test]
-    fn too_early_message_preprocessing() {
-        let current_time = 12;
-        let mut message = Message::new(
-            50, 
-            MessageType::ChangeGoal(Goal::Reposition)
-        );
-
-        assert!(
-            matches!(
-                try_preprocess_message(current_time, &mut message), 
-                Err(MessagePreprocessError::TooEarly)
-            )
-        );
-    }
-    
-    #[test]
-    fn preprocessing_already_preprocessed_message() {
-        let current_time = 0;
-        let mut message = Message::new(
-            current_time, 
-            MessageType::ChangeGoal(Goal::Reposition)
-        );
-        message.process();
-
-        assert!(
-            matches!(
-                try_preprocess_message(current_time, &mut message), 
-                Err(MessagePreprocessError::AlreadyPreprocessed)
-            )
-        );
-    }
 
     #[test]
     fn network_diameter() {
