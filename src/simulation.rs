@@ -1,7 +1,7 @@
 use std::ops::Range;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
-use full_palette::GREY;
+use full_palette::{GREY, PURPLE};
 use log::{info, trace};
 use plotters::coord::{ranged3d::Cartesian3d, types::RangedCoordf64, Shift};
 use plotters::prelude::*;
@@ -9,7 +9,7 @@ use plotters::style::RGBColor;
 use thiserror::Error;
 
 use crate::communication::{
-    GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
+    SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
 };
 use crate::device::{
     CommandCenter, DESTINATION_RADIUS, Drone, ElectronicWarfare, STEP_DURATION, 
@@ -139,26 +139,40 @@ fn convert_meters_to_pixels(
     (value * coef) as u32 
 }
 
+fn color_by_infection(infected: bool) -> RGBColor {
+    if infected {
+        PURPLE
+    } else {
+        BLACK
+    }
+}
+
+fn color_by_signal(signal_level: SignalLevel) -> RGBColor {
+    if signal_level.is_green() {
+        GREEN
+    } else if signal_level.is_yellow() {
+        YELLOW
+    } else if signal_level.is_red() {
+        RED
+    } else {
+        BLACK
+    }
+}
+
 fn get_drone_color(drone: &Drone, coloring: DroneColoring) -> RGBColor {
     match coloring {
+        DroneColoring::Infection => color_by_infection(drone.is_infected()),
         DroneColoring::Signal => {
             let signal_level = drone.rx_signal_level(WIFI_2_4GHZ_FREQUENCY);
-
-            if signal_level.is_green() {
-                GREEN
-            } else if signal_level.is_yellow() {
-                YELLOW
-            } else if signal_level.is_red() {
-                RED
-            } else {
-                BLACK
-            }
+            
+            color_by_signal(*signal_level)
         },
         DroneColoring::SingleColor(r, g, b) => {
             RGBColor(r, g, b)
         }
     }
 }
+
 
 #[derive(Debug, Error)]
 pub enum DrawError {
@@ -169,8 +183,9 @@ pub enum DrawError {
 
 #[derive(Clone, Copy)]
 pub enum DroneColoring {
-    SingleColor(u8, u8, u8),
+    Infection,
     Signal,
+    SingleColor(u8, u8, u8),
 }
 
 
@@ -213,7 +228,9 @@ pub struct PlottersRenderer<'a> {
         'a, 
         BitMapBackend<'a>, 
         Cartesian3d<RangedCoordf64, RangedCoordf64, RangedCoordf64>
-    >
+    >,
+    pitch: f64,
+    yaw: f64
 }
 
 impl<'a> PlottersRenderer<'a> {
@@ -227,6 +244,8 @@ impl<'a> PlottersRenderer<'a> {
         screen_resolution: (u32, u32),
         axes_ranges: Axes3DRanges,
         drone_colors: &[DroneColoring],
+        pitch: f64,
+        yaw: f64
     ) -> Self {
         let output_path = output_path.to_string();
         let area = BitMapBackend::gif(
@@ -238,7 +257,9 @@ impl<'a> PlottersRenderer<'a> {
             &area, 
             caption,
             font_size(screen_resolution.0),
-            &axes_ranges
+            &axes_ranges,
+            pitch,
+            yaw
         ); 
 
         Self {
@@ -247,7 +268,9 @@ impl<'a> PlottersRenderer<'a> {
             axes_ranges,
             drone_colors: drone_colors.to_vec(),
             area,
-            chart
+            chart,
+            pitch,
+            yaw
         }
     }
 
@@ -258,20 +281,29 @@ impl<'a> PlottersRenderer<'a> {
         area: &DrawingArea<BitMapBackend<'a>, Shift>, 
         caption: &str,
         font_size: u32,
-        axes_ranges: &Axes3DRanges
+        axes_ranges: &Axes3DRanges,
+        pitch: f64,
+        yaw: f64
     ) -> ChartContext<
         'a, 
         BitMapBackend<'a>, 
         Cartesian3d<RangedCoordf64, RangedCoordf64, RangedCoordf64>
     > {
-        ChartBuilder::on(area)
+        let mut chart = ChartBuilder::on(area)
             .margin(PLOT_MARGIN)
             .caption(caption, ("sans-serif", font_size))
             .build_cartesian_3d(
                 axes_ranges.x.clone(),
                 axes_ranges.y.clone(),
                 axes_ranges.z.clone(),
-            ).unwrap()
+            ).unwrap();
+        chart.with_projection(|mut p| {
+            p.pitch = pitch;
+            p.yaw = yaw;
+            p.into_matrix()
+        });
+
+        chart
     }
 
     fn reset_chart_context(&mut self) {
@@ -279,7 +311,9 @@ impl<'a> PlottersRenderer<'a> {
             &self.area, 
             &self.caption,
             font_size(self.screen_resolution.0), 
-            &self.axes_ranges
+            &self.axes_ranges,
+            self.pitch,
+            self.yaw
         );
     }
 

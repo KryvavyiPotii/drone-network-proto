@@ -4,10 +4,10 @@ use rand::prelude::*;
 
 use crate::communication::{
     GPS_L1_FREQUENCY, Message, MessagePreprocessError, MessageQueue, 
-    MessageType, NO_SIGNAL_LEVEL, Scenario, SignalLevel, WIFI_2_4GHZ_FREQUENCY
+    MessageType, NO_SIGNAL_LEVEL, SignalLevel, WIFI_2_4GHZ_FREQUENCY
 };
 use crate::device::{
-    CommandCenter, DeviceId, Drone, ElectronicWarfare, Receiver, 
+    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, Receiver, 
     STEP_DURATION, Suppressor, Transceiver, Transmitter, UNKNOWN_ID,
 };
 use crate::device::networkmodel::{
@@ -132,7 +132,7 @@ impl CellularAutomaton {
         command_center: CommandCenter,
         drone_map: IdToDroneMap,
         electronic_warfare_devices: Vec<ElectronicWarfare>,
-        scenario: &Scenario,
+        scenario: &[(Megahertz, Message)],
         topology: Topology,
     ) -> Self {
         let mut cellular_automaton = Self {
@@ -158,7 +158,7 @@ impl CellularAutomaton {
         self.drone_map.remove_uncontrolled_drones(WIFI_2_4GHZ_FREQUENCY);
         self.process_message_queue();
         self.drone_map.update_states();
-       
+      
         self.current_time += STEP_DURATION;
     }
 
@@ -233,6 +233,8 @@ impl CellularAutomaton {
         if self.message_queue.is_empty() {
             return;
         }
+
+        let mut infection_messages = Vec::new();
         
         for (frequency, message) in &mut self.message_queue {
             match message.try_preprocess(
@@ -246,9 +248,28 @@ impl CellularAutomaton {
                 Err(MessagePreprocessError::AlreadyPreprocessed) => (),
                 Ok(()) =>
                     match message.message_type() {
-                        MessageType::SetDestination(destination, _) =>
+                        MessageType::ChangeGoal(_) => 
+                            (),
+                        MessageType::Infection => {
+                            let destination_id = message.destination_id();
+
+                            let neighbors = self.connections.neighbors_outgoing(
+                                destination_id
+                            );
+
+                            for node in neighbors {
+                                let infection_message = Message::new(
+                                    destination_id,
+                                    node,
+                                    message.time(),
+                                    MessageType::Infection
+                                );
+                                
+                                infection_messages.push(infection_message);
+                            }
+                        },
+                        MessageType::SetDestination(destination) =>
                             self.destination_in_meters = *destination,
-                        MessageType::ChangeGoal(_) => ()
                     }
             }
             
@@ -256,8 +277,29 @@ impl CellularAutomaton {
             
             message.finish();
         }
-
+        
         self.message_queue.remove_finished_messages();
+        
+        let mut infected_drones = Vec::new();
+
+        for infection_message in infection_messages {
+            let Some(drone) = self.drone_map.get(
+                &infection_message.destination_id()
+            ) else {
+                continue;
+            };
+
+            if drone.is_infected() || infected_drones.contains(&drone.id()) {
+                continue;
+            }
+
+            self.message_queue.add_message(
+                WIFI_2_4GHZ_FREQUENCY,
+                infection_message
+            );
+            
+            infected_drones.push(drone.id());
+        }
     }
 
     fn suppress_network(&mut self) {

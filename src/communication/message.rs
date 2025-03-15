@@ -20,17 +20,17 @@ pub const CHANGE_GOAL_COST: MessageCost     = MessageCost(
 pub const SET_DESTINATION_COST: MessageCost = MessageCost(
     GREEN_SIGNAL_STRENGTH_VALUE / 50.0 
 );
+pub const INFECTION_COST: MessageCost       = MessageCost(
+    GREEN_SIGNAL_STRENGTH_VALUE / 50.0
+);
 
 
 fn define_message_execution_cost(message_type: &MessageType) -> MessageCost {
     match message_type {
         MessageType::ChangeGoal(_) => CHANGE_GOAL_COST,
-        MessageType::SetDestination(..) =>  SET_DESTINATION_COST
+        MessageType::Infection => INFECTION_COST,
+        MessageType::SetDestination(..) =>  SET_DESTINATION_COST,
     }
-}
-
-fn sort_messages_by_time_ascending(messages: &mut [(Megahertz, Message)]) {
-    messages.sort_by_key(|(_, message)| message.time());
 }
 
 
@@ -91,8 +91,8 @@ pub enum Goal {
 #[derive(Clone, Copy, Debug)]
 pub enum MessageType {
     ChangeGoal(Goal),
-    SetDestination(Point3D, Goal),
-    // TODO Infect,
+    Infection,
+    SetDestination(Point3D),
 }
 
 
@@ -102,6 +102,7 @@ pub enum MessageState {
     InProgress,
     Finished,
 }
+
 
 #[derive(Error, Debug)]
 pub enum MessagePreprocessError {
@@ -224,50 +225,6 @@ impl Message {
 
 
 #[derive(Clone, Debug, Default)]
-pub struct Scenario(Vec<(Megahertz, Message)>);
-
-impl Scenario {
-    pub fn iter(&self) -> std::slice::Iter<'_, (Megahertz, Message)> {
-        self.0.iter()
-    }
-
-    #[must_use]
-    pub fn vec(&self) -> Vec<(Megahertz, Message)> {
-        self.0.clone()
-    }
-}
-
-impl<'a> IntoIterator for &'a Scenario{
-    type Item = &'a (Megahertz, Message);
-    type IntoIter = std::slice::Iter<'a, (Megahertz, Message)>;
-    
-    fn into_iter(self) -> Self::IntoIter {
-         self.iter()
-    }
-}
-
-impl From<&[(Megahertz, Message)]> for Scenario {
-    fn from(messages: &[(Megahertz, Message)]) -> Self {
-        let mut scenario = Self(messages.to_vec());
-
-        sort_messages_by_time_ascending(&mut scenario.0);
-
-        scenario
-    }
-}
-
-impl<const N: usize> From<[(Megahertz, Message); N]> for Scenario {
-    fn from(messages: [(Megahertz, Message); N]) -> Self {
-        let mut scenario = Self(messages.to_vec());
-
-        sort_messages_by_time_ascending(&mut scenario.0);
-
-        scenario
-    }
-}
-
-
-#[derive(Clone, Debug, Default)]
 pub struct MessageQueue(Vec<(Megahertz, Message)>);
 
 impl MessageQueue {
@@ -280,14 +237,10 @@ impl MessageQueue {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-
-    pub fn remove_finished_messages(&mut self) {
-        self.0.retain(|(_, message)| !message.is_finished());
-    }
-
-    pub fn add_message(&mut self, frequency: Megahertz, message: Message) {
-        self.0.push((frequency, message));
-        sort_messages_by_time_ascending(&mut self.0);
+    
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
     
     pub fn iter(&self) -> std::slice::Iter<'_, (Megahertz, Message)> {
@@ -300,9 +253,13 @@ impl MessageQueue {
         self.0.iter_mut()
     }
     
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    pub fn add_message(&mut self, frequency: Megahertz, message: Message) {
+        self.0.push((frequency, message));
+        self.0.sort_by_key(|(_, message)| message.time());
+    }
+
+    pub fn remove_finished_messages(&mut self) {
+        self.0.retain(|(_, message)| !message.is_finished());
     }
 }
 
@@ -326,33 +283,21 @@ impl<'a> IntoIterator for &'a mut MessageQueue{
 
 impl From<&[(Megahertz, Message)]> for MessageQueue {
     fn from(messages: &[(Megahertz, Message)]) -> Self {
-        let mut scenario = Self(messages.to_vec());
+        let mut message_queue = Self(messages.to_vec());
 
-        sort_messages_by_time_ascending(&mut scenario.0);
+        message_queue.0.sort_by_key(|(_, message)| message.time());
 
-        scenario
+        message_queue
     }
 }
 
 impl<const N: usize> From<[(Megahertz, Message); N]> for MessageQueue {
     fn from(messages: [(Megahertz, Message); N]) -> Self {
-        let mut scenario = Self(messages.to_vec());
+        let mut message_queue = Self(messages.to_vec());
 
-        sort_messages_by_time_ascending(&mut scenario.0);
+        message_queue.0.sort_by_key(|(_, message)| message.time());
 
-        scenario
-    }
-}
-
-impl From<Scenario> for MessageQueue {
-    fn from(scenario: Scenario) -> Self {
-        Self(scenario.0)
-    }
-}
-
-impl From<&Scenario> for MessageQueue {
-    fn from(scenario: &Scenario) -> Self {
-        Self(scenario.vec())
+        message_queue
     }
 }
 
@@ -445,18 +390,6 @@ mod tests {
         (connections, cc_id)
     }
 
-
-    #[test]
-    fn correct_message_sort() {
-        let messages = message_vec();
-        let mut sorted_messages = messages.clone();
-
-        sort_messages_by_time_ascending(&mut sorted_messages);
-
-        assert_eq!(sorted_messages[0].1.time(), messages[1].1.time());
-        assert_eq!(sorted_messages[1].1.time(), messages[2].1.time());
-        assert_eq!(sorted_messages[2].1.time(), messages[0].1.time());
-    }
 
     #[test]
     fn removing_finished_messages() {

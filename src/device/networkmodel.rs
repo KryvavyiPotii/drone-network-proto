@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::collections::hash_map::{Iter, IterMut, Keys, Values, ValuesMut};
 
-use petgraph::graphmap::GraphMap; 
+use petgraph::graphmap::{GraphMap, NeighborsDirected}; 
 use petgraph::visit::EdgeRef;
-use petgraph::Directed;
+use petgraph::{Directed, Direction};
 use rustworkx_core::centrality::betweenness_centrality;
 use rustworkx_core::dictmap::DictMap;
 use rustworkx_core::shortest_path::{astar, dijkstra};
@@ -13,7 +13,7 @@ use crate::device::{
     CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, Receiver,
     Transceiver, Transmitter
 };
-use crate::communication::{NO_SIGNAL_LEVEL, Scenario, SignalLevel};
+use crate::communication::{Message, SignalLevel, NO_SIGNAL_LEVEL};
 use crate::mathphysics::{Megahertz, Meter, Point3D};
 
 
@@ -251,7 +251,7 @@ pub struct NetworkModelBuilder {
     electronic_warfare_devices: Option<Vec<ElectronicWarfare>>,
     destination_in_meters: Option<Point3D>,
     topology: Option<Topology>,
-    scenario: Option<Scenario>
+    scenario: Option<Vec<(Megahertz, Message)>>
 }
 
 impl NetworkModelBuilder {
@@ -292,8 +292,8 @@ impl NetworkModelBuilder {
     }
 
     #[must_use]
-    pub fn set_destination(mut self, destination_in_meters: &Point3D) -> Self {
-        self.destination_in_meters = Some(*destination_in_meters);
+    pub fn set_destination(mut self, destination_in_meters: Point3D) -> Self {
+        self.destination_in_meters = Some(destination_in_meters);
         self
     }
 
@@ -304,7 +304,7 @@ impl NetworkModelBuilder {
     }
 
     #[must_use]
-    pub fn set_scenario(mut self, scenario: Scenario) -> Self {
+    pub fn set_scenario(mut self, scenario: Vec<(Megahertz, Message)>) -> Self {
         self.scenario = Some(scenario);
         self
     }
@@ -538,6 +538,14 @@ impl ConnectionGraph {
     #[must_use]
     pub fn contains_device(&self, node: DeviceId) -> bool {
         self.0.contains_node(node)
+    }
+
+    #[must_use]
+    pub fn neighbors_outgoing(
+        &self, 
+        node: DeviceId
+    ) -> NeighborsDirected<'_, DeviceId, Directed> {
+        self.0.neighbors_directed(node, Direction::Outgoing)
     }
 
     pub fn clear(&mut self) {
@@ -793,7 +801,6 @@ mod tests {
             )
             .build()
     }
-
 
     #[test]
     fn network_diameter() {

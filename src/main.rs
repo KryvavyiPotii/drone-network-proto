@@ -31,7 +31,7 @@ fn configure_logging() {
 
 fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.3.1")
+        .version("0.4.0")
         .about("Models drone networks")
         .arg(
             Arg::new("example")
@@ -75,7 +75,15 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            5 => examples::gps_only(
+            5 => examples::infection(
+                &Config::new(
+                    "Complex network (Star, infection)",
+                    false,
+                    NetworkModelType::ComplexNetwork(5.0),
+                    Topology::Star
+                )
+            ),
+            6 => examples::gps_only(
                 &Config::new(
                     "Complex network (Mesh, GPS EWD)",
                     false,
@@ -83,7 +91,7 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            6 => examples::gps_and_control(
+            7 => examples::gps_and_control(
                 &Config::new(
                     "Complex network (Mesh, GPS and Control EWD)",
                     false,
@@ -91,7 +99,7 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            7 => examples::command_delay(
+            8 => examples::command_delay(
                 &Config::new(
                     "Complex network (Mesh, delays)",
                     true,
@@ -99,7 +107,7 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            8 => examples::signal_color(
+            9 => examples::signal_color(
                 &Config::new(
                     "Complex network (Mesh, signal color)",
                     false,
@@ -107,7 +115,15 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            9 => examples::gps_only(
+            10 => examples::infection(
+                &Config::new(
+                    "Complex network (Mesh, infection)",
+                    false,
+                    NetworkModelType::ComplexNetwork(5.0),
+                    Topology::Mesh
+                )
+            ),
+            11 => examples::gps_only(
                 &Config::new(
                     "Cellular automaton (Star, GPS EWD)",
                     false,
@@ -115,7 +131,7 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            10 => examples::gps_and_control(
+            12 => examples::gps_and_control(
                 &Config::new(
                     "Cellular automaton (Star, GPS and Control EWD)",
                     false,
@@ -123,7 +139,7 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            11 => examples::signal_color(
+            13 => examples::signal_color(
                 &Config::new(
                     "Cellular automaton (Star, signal color)",
                     false,
@@ -131,7 +147,15 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            12 => examples::gps_only(
+            14 => examples::infection(
+                &Config::new(
+                    "Cellular automaton (Star, infection)",
+                    false,
+                    NetworkModelType::CellularAutomaton,
+                    Topology::Star
+                )
+            ),
+            15 => examples::gps_only(
                 &Config::new(
                     "Cellular automaton (Mesh, GPS EWD)",
                     false,
@@ -139,7 +163,7 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            13 => examples::gps_and_control(
+            16 => examples::gps_and_control(
                 &Config::new(
                     "Cellular automaton (Mesh, GPS and Control EWD)",
                     false,
@@ -147,9 +171,17 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            14 => examples::signal_color(
+            17 => examples::signal_color(
                 &Config::new(
                     "Cellular automaton (Mesh, signal color)",
+                    false,
+                    NetworkModelType::CellularAutomaton,
+                    Topology::Mesh
+                )
+            ),
+            18 => examples::infection(
+                &Config::new(
+                    "Cellular automaton (Mesh, infection)",
                     false,
                     NetworkModelType::CellularAutomaton,
                     Topology::Mesh

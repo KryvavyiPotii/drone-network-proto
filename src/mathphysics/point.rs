@@ -1,13 +1,16 @@
-use derive_more::{Add, Sub, Mul, Div, MulAssign, DivAssign};
+use std::ops;
+
+use derive_more::{MulAssign, DivAssign};
+use impl_ops::{
+    _impl_binary_op_borrowed_borrowed, _impl_binary_op_borrowed_owned, 
+    _impl_binary_op_internal, _impl_binary_op_owned_borrowed, 
+    _impl_binary_op_owned_owned, _parse_binary_op, impl_op, impl_op_ex
+};
 
 use super::Position;
 
 
-#[derive(
-    Copy, Clone, 
-    PartialEq, Add, Sub, Mul, Div, MulAssign, DivAssign, 
-    Debug, Default
-)]
+#[derive(Copy, Clone, PartialEq, MulAssign, DivAssign, Debug, Default)]
 pub struct Point3D { 
     pub x: f32, 
     pub y: f32, 
@@ -26,6 +29,46 @@ impl Point3D {
         self.z = coordinates.2;
     }
 }
+
+impl_op_ex!(
+    + |a: &Point3D, b: &Point3D| -> Point3D { 
+        Point3D {
+            x: a.x + b.x,
+            y: a.y + b.y,
+            z: a.z + b.z,
+        }
+    }
+);
+
+impl_op_ex!(
+    - |a: &Point3D, b: &Point3D| -> Point3D { 
+        Point3D {
+            x: a.x - b.x,
+            y: a.y - b.y,
+            z: a.z - b.z,
+        }
+    }
+);
+
+impl_op_ex!(
+    * |a: &Point3D, b: &Point3D| -> Point3D { 
+        Point3D {
+            x: a.x * b.x,
+            y: a.y * b.y,
+            z: a.z * b.z,
+        }
+    }
+);
+
+impl_op_ex!(
+    / |a: &Point3D, b: &Point3D| -> Point3D { 
+        Point3D {
+            x: a.x / b.x,
+            y: a.y / b.y,
+            z: a.z / b.z,
+        }
+    }
+);
 
 impl From<(f32, f32, f32)> for Point3D {
     fn from(value: (f32, f32, f32)) -> Self {

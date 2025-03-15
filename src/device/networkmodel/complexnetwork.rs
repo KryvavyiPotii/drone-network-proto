@@ -13,7 +13,7 @@ use crate::mathphysics::{
 };
 use crate::communication::{
     GPS_L1_FREQUENCY, Message, MessagePreprocessError, MessageType, 
-    NO_SIGNAL_LEVEL, Scenario, WIFI_2_4GHZ_FREQUENCY
+    NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
 };
 
 
@@ -113,23 +113,28 @@ fn calculate_delay(distance: Meter, multiplier: f32) -> Millisecond {
 }
 
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 struct MessageQueue(Vec<(Megahertz, Message, DelaySnapshot)>);
 
 impl MessageQueue {
-    fn remove_finished_messages(&mut self) {
-        self.0.retain(|(_, message, _)| !message.is_finished());
+    #[must_use]
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
-
+    
     fn iter_mut(
         &mut self
     ) -> std::slice::IterMut<'_, (Megahertz, Message, DelaySnapshot)> {
         self.0.iter_mut()
     }
    
-    #[must_use]
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    fn add_message(&mut self, frequency: Megahertz, message: Message) {
+        self.0.push((frequency, message, DelaySnapshot::default()));
+        self.0.sort_by_key(|(_, message, _)| message.time());
+    }
+
+    fn remove_finished_messages(&mut self) {
+        self.0.retain(|(_, message, _)| !message.is_finished());
     }
 }
 
@@ -145,16 +150,37 @@ impl<'a> IntoIterator for &'a mut MessageQueue{
     }
 }
 
-impl From<&Scenario> for MessageQueue {
-    fn from(scenario: &Scenario) -> Self {
-        Self(
-            scenario
-                .iter()
-                .map(|(frequency, message)| 
-                    (*frequency, *message, DelaySnapshot::default())
-                )
-                .collect()
-        )
+impl From<&[(Megahertz, Message)]> for MessageQueue {
+    fn from(messages: &[(Megahertz, Message)]) -> Self {
+        let messages: Vec<(Megahertz, Message, DelaySnapshot)> = messages
+            .iter()
+            .map(|(frequency, message)| 
+                (*frequency, *message, DelaySnapshot::default())
+            )
+            .collect();
+
+        let mut message_queue = Self(messages);
+
+        message_queue.0.sort_by_key(|(_, message, _)| message.time());
+
+        message_queue
+    }
+}
+
+impl<const N: usize> From<[(Megahertz, Message); N]> for MessageQueue {
+    fn from(messages: [(Megahertz, Message); N]) -> Self {
+        let messages: Vec<(Megahertz, Message, DelaySnapshot)> = messages
+            .iter()
+            .map(|(frequency, message)| 
+                (*frequency, *message, DelaySnapshot::default())
+            )
+            .collect();
+
+        let mut message_queue = Self(messages);
+
+        message_queue.0.sort_by_key(|(_, message, _)| message.time());
+
+        message_queue
     }
 }
 
@@ -179,7 +205,7 @@ impl ComplexNetwork {
         command_center: CommandCenter,
         drone_map: IdToDroneMap,
         electronic_warfare_devices: Vec<ElectronicWarfare>,
-        scenario: &Scenario,
+        scenario: &[(Megahertz, Message)],
         topology: Topology,
         delay_multiplier: f32
     ) -> Self {
@@ -207,7 +233,7 @@ impl ComplexNetwork {
         self.drone_map.remove_uncontrolled_drones(WIFI_2_4GHZ_FREQUENCY);
         self.process_message_queue();
         self.drone_map.update_states();
-      
+     
         self.current_time += STEP_DURATION;
     }
 
@@ -289,6 +315,8 @@ impl ComplexNetwork {
         // Preprocess delays to avoid unnecessary function calls in the loop.
         let delays = self.delays();
 
+        let mut infection_messages = Vec::new();
+
         for (frequency, message, delays_snapshot) in &mut self.message_queue {
             match message.try_preprocess(
                 self.current_time, 
@@ -299,13 +327,32 @@ impl ComplexNetwork {
                     | MessagePreprocessError::UnknownSource
                 ) => continue, 
                 Err(MessagePreprocessError::AlreadyPreprocessed) => (),
-                Ok(()) =>  {
+                Ok(()) => {
                     delays_snapshot.clone_from(&delays);
 
                     match message.message_type() {
-                        MessageType::SetDestination(destination, _) =>
+                        MessageType::ChangeGoal(_) => 
+                            (),
+                        MessageType::Infection => {
+                            let destination_id = message.destination_id();
+
+                            let neighbors = self.connections.neighbors_outgoing(
+                                destination_id
+                            );
+                            
+                            for node in neighbors {
+                                let infection_message = Message::new(
+                                    destination_id,
+                                    node,
+                                    message.time(),
+                                    MessageType::Infection
+                                );
+                                
+                                infection_messages.push(infection_message);
+                            }
+                        },
+                        MessageType::SetDestination(destination) =>
                             self.destination_in_meters = *destination,
-                        MessageType::ChangeGoal(_) => ()
                     }
                 }
             }
@@ -326,6 +373,27 @@ impl ComplexNetwork {
         }
 
         self.message_queue.remove_finished_messages();
+       
+        let mut infected_drones = Vec::new();
+
+        for infection_message in infection_messages {
+            let Some(drone) = self.drone_map.get(
+                &infection_message.destination_id()
+            ) else {
+                continue;
+            };
+
+            if drone.is_infected() || infected_drones.contains(&drone.id()) {
+                continue;
+            }
+
+            self.message_queue.add_message(
+                WIFI_2_4GHZ_FREQUENCY,
+                infection_message
+            );
+            
+            infected_drones.push(drone.id());
+        }
     }
 
     // Connections graph should already be created and populated before delay
@@ -582,7 +650,7 @@ mod tests {
             command_center, 
             IdToDroneMap::from([drone]), 
             Vec::new(), 
-            &Scenario::default(), 
+            &Vec::new(), 
             Topology::Mesh, 
             0.0
         );
@@ -637,7 +705,7 @@ mod tests {
             command_center.clone(), 
             IdToDroneMap::from(drones1), 
             Vec::new(), 
-            &Scenario::default(), 
+            &Vec::new(), 
             Topology::Star, 
             0.0
         );
@@ -677,7 +745,7 @@ mod tests {
             command_center, 
             IdToDroneMap::from(drones2), 
             Vec::new(), 
-            &Scenario::default(), 
+            &Vec::new(), 
             Topology::Mesh, 
             0.0
         );
@@ -729,7 +797,7 @@ mod tests {
             command_center, 
             IdToDroneMap::from(drones), 
             Vec::new(), 
-            &Scenario::default(), 
+            &Vec::new(), 
             Topology::Mesh, 
             0.0
         );

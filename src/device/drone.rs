@@ -23,7 +23,6 @@ pub struct DroneBuilder<'a> {
     id: DeviceId,
     command_center: Option<&'a CommandCenter>,
     global_position_in_meters: Option<Point3D>,
-    destination_in_meters: Option<Point3D>,
     goal: Option<Goal>,
     trx_system: Option<TRXSystem>
 }
@@ -35,7 +34,6 @@ impl<'a> DroneBuilder<'a> {
             id: generate_device_id(),
             command_center: None,
             global_position_in_meters: None,
-            destination_in_meters: None,
             goal: None,
             trx_system: None
         }
@@ -56,15 +54,6 @@ impl<'a> DroneBuilder<'a> {
         global_position_in_meters: Point3D
     ) -> Self {
         self.global_position_in_meters = Some(global_position_in_meters);
-        self
-    }
-    
-    #[must_use]
-    pub fn set_destination(
-        mut self, 
-        destination_in_meters: Point3D
-    ) -> Self {
-        self.destination_in_meters = Some(destination_in_meters);
         self
     }
     
@@ -91,7 +80,6 @@ impl<'a> DroneBuilder<'a> {
             self.id,
             command_center_id,
             self.global_position_in_meters.unwrap_or_default(),
-            self.destination_in_meters.unwrap_or_default(),
             self.goal.unwrap_or_default(),
             self.trx_system.unwrap_or_default()
         )
@@ -122,8 +110,8 @@ pub struct Drone {
     velocity: Vector3D,
     destination_in_meters: Point3D,
     goal: Goal,
-    trx_system: TRXSystem
-    // TODO infection_state
+    trx_system: TRXSystem,
+    infection_state: bool
 }
 
 impl Drone {
@@ -132,7 +120,6 @@ impl Drone {
         id: DeviceId,
         command_center_id: DeviceId,
         global_position_in_meters: Point3D,
-        destination_in_meters: Point3D,
         goal: Goal,
         trx_system: TRXSystem
     ) -> Self {
@@ -145,9 +132,10 @@ impl Drone {
             // To get it the drone needs GPS connection.
             position_in_meters: Point3D::default(),
             velocity: Vector3D::default(),
-            destination_in_meters,
+            destination_in_meters: global_position_in_meters,
             goal,
-            trx_system
+            trx_system,
+            infection_state: false
         }
     }
 
@@ -161,10 +149,19 @@ impl Drone {
         &self.position_in_meters
     }
 
+    #[must_use]
+    pub fn is_infected(&self) -> bool {
+        self.infection_state
+    }
+
     pub fn connect_command_center(&mut self, command_center: &CommandCenter) {
         self.command_center_id = command_center.id();
     }
-    
+   
+    /// # Errors
+    ///
+    /// Will return Err if destination device ID of message is not broadcast 
+    /// nor drone's device ID or if `Drone::receive_message` returns Err.
     pub fn process_message(
         &mut self, 
         frequency: Megahertz, 
@@ -179,13 +176,15 @@ impl Drone {
         self.receive_message(frequency, message)?;
 
         match message.message_type() {
-            MessageType::SetDestination(destination, goal) => {
-                self.destination_in_meters = *destination;
-                self.goal = *goal;
-            },
             MessageType::ChangeGoal(goal) => {
                 self.goal = *goal;
-            }
+            },
+            MessageType::Infection => {
+                self.infection_state = true;
+            },
+            MessageType::SetDestination(destination) => {
+                self.destination_in_meters = *destination;
+            },
         };
 
         Ok(())
@@ -432,8 +431,19 @@ mod tests {
         let destination_point = Point3D::new(MAX_DRONE_SPEED, 0.0, 0.0);
         
         let mut drone_without_gps = DroneBuilder::new()
-            .set_destination(destination_point)
+            .set_trx_system(drone_green_rx_system(WIFI_2_4GHZ_FREQUENCY))
             .build();
+
+        let set_destination_message = Message::new(
+            UNKNOWN_ID, 
+            drone_without_gps.id(), 
+            0, 
+            MessageType::SetDestination(destination_point)
+        );
+        let _ = drone_without_gps.process_message(
+            WIFI_2_4GHZ_FREQUENCY, 
+            &set_destination_message
+        );
 
         for _ in (0..1000).step_by(STEP_DURATION as usize) {
             drone_without_gps.update_state();
@@ -454,8 +464,19 @@ mod tests {
         let destination_point = Point3D::new(MAX_DRONE_SPEED, 0.0, 0.0);
         
         let mut drone = DroneBuilder::new()
-            .set_destination(destination_point)
+            .set_trx_system(drone_green_rx_system(WIFI_2_4GHZ_FREQUENCY))
             .build();
+        
+        let set_destination_message = Message::new(
+            UNKNOWN_ID, 
+            drone.id(), 
+            0, 
+            MessageType::SetDestination(destination_point)
+        );
+        let _ = drone.process_message(
+            WIFI_2_4GHZ_FREQUENCY, 
+            &set_destination_message
+        ); 
 
         for _ in (0..1000).step_by(STEP_DURATION as usize) {
             drone.update_state();
