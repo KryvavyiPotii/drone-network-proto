@@ -1,17 +1,18 @@
 use std::hash::{Hash, Hasher};
 
-use crate::communication::{
-    FreqToLevelMap, Goal, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, Message, 
-    MessageType, NO_SIGNAL_LEVEL, SignalArea, SignalLevel, WIFI_2_4GHZ_FREQUENCY,
-};
 use crate::device::{
     CommandCenter, Device, DeviceId, Receiver, STEP_DURATION, Transceiver, 
     Transmitter, UNKNOWN_ID, generate_device_id,
 };
-use crate::device::modules::{ReceiveMessageError, TRXSystem};
+use crate::device::systems::{ReceiveMessageError, TRXSystem};
 use crate::mathphysics::{
     Megahertz, Meter, MeterPerSecond, Point3D, Position, Vector3D, 
     equation_of_motion_3d, millis_to_secs, 
+};
+use crate::message::{Goal, Message, MessageType};
+use crate::signal::{
+    FreqToLevelMap, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, NO_SIGNAL_LEVEL, 
+    SignalArea, SignalLevel, WIFI_2_4GHZ_FREQUENCY,
 };
 
 
@@ -402,7 +403,7 @@ impl Transceiver for Drone {}
 mod tests {
     use std::collections::HashMap;
 
-    use crate::device::modules::TRXModule;
+    use crate::device::systems::TRXModule;
 
     use super::*;
 
@@ -545,5 +546,26 @@ mod tests {
                 Err(ReceiveMessageError::WrongDestination)
             )
         );
+    }
+
+    #[test]
+    fn get_infected() {
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let message = Message::new(
+            UNKNOWN_ID,
+            UNKNOWN_ID,
+            0, 
+            MessageType::Infection
+        );
+
+        let mut drone = DroneBuilder::new()
+            .set_trx_system(drone_green_rx_system(frequency))
+            .build();
+
+        assert!(!drone.is_infected());
+
+        let _ = drone.process_message(frequency, &message);
+
+        assert!(drone.is_infected());
     }
 }

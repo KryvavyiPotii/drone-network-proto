@@ -1,26 +1,18 @@
-use std::collections::{HashMap, hash_map::Values};
+use std::collections::hash_map::Values;
 
 use crate::device::{
-    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, Suppressor, 
-    Transceiver, Transmitter, STEP_DURATION, UNKNOWN_ID,
+    CommandCenter, ConnectionGraph, DelaySnapshot, Device, DeviceId, Drone, 
+    ElectronicWarfare, FindSignalLevel, IdToDroneMap, IdToLevelMap, Topology, 
+    Suppressor, Transceiver, Transmitter, STEP_DURATION, UNKNOWN_ID,
 };
 use crate::device::networkmodel::{
-    ConnectionGraph, FindSignalLevel, IdToDroneMap, IdToLevelMap, Topology
-}; 
-use crate::mathphysics::{
-    Megahertz, Meter, Millisecond, Point3D, SPEED_OF_LIGHT, kmps_to_mpms,
-    time_in_millis_from_distance_and_speed
+    enqueue_infection_messages, spread_infection_messages
 };
-use crate::communication::{
-    GPS_L1_FREQUENCY, Message, MessagePreprocessError, MessageType, 
-    NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
+use crate::mathphysics::{Megahertz, Millisecond, Point3D};
+use crate::message::{
+    Message, MessagePreprocessError, MessageQueue, MessageType
 };
-
-
-type DelaySnapshot = HashMap<DeviceId, u32>;
-
-
-const DELAY_DISTANCE_COEFFICIENT: f32 = 1_500_000.0;
+use crate::signal::{GPS_L1_FREQUENCY, NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY};
 
 
 // Making this function a method of ComplexNetwork and calling it from 
@@ -94,93 +86,6 @@ fn try_finish_message(
         if current_time >= message.time() + longest_delay {
             message.finish(); 
         }
-    }
-}
-
-fn calculate_delay(distance: Meter, multiplier: f32) -> Millisecond {    
-    if multiplier == 0.0 {
-        return 0;
-    }
-
-    let delay = (multiplier * time_in_millis_from_distance_and_speed(
-        distance * DELAY_DISTANCE_COEFFICIENT, 
-        kmps_to_mpms(SPEED_OF_LIGHT) 
-    )) as Millisecond;
-
-    let reminder = delay % STEP_DURATION;
-    
-    delay - reminder
-}
-
-
-#[derive(Clone, Debug, Default)]
-struct MessageQueue(Vec<(Megahertz, Message, DelaySnapshot)>);
-
-impl MessageQueue {
-    #[must_use]
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    
-    fn iter_mut(
-        &mut self
-    ) -> std::slice::IterMut<'_, (Megahertz, Message, DelaySnapshot)> {
-        self.0.iter_mut()
-    }
-   
-    fn add_message(&mut self, frequency: Megahertz, message: Message) {
-        self.0.push((frequency, message, DelaySnapshot::default()));
-        self.0.sort_by_key(|(_, message, _)| message.time());
-    }
-
-    fn remove_finished_messages(&mut self) {
-        self.0.retain(|(_, message, _)| !message.is_finished());
-    }
-}
-
-impl<'a> IntoIterator for &'a mut MessageQueue{
-    type Item = &'a mut (Megahertz, Message, DelaySnapshot);
-    type IntoIter = std::slice::IterMut<
-        'a, 
-        (Megahertz, Message, DelaySnapshot)
-    >;
-    
-    fn into_iter(self) -> Self::IntoIter {
-         self.iter_mut()
-    }
-}
-
-impl From<&[(Megahertz, Message)]> for MessageQueue {
-    fn from(messages: &[(Megahertz, Message)]) -> Self {
-        let messages: Vec<(Megahertz, Message, DelaySnapshot)> = messages
-            .iter()
-            .map(|(frequency, message)| 
-                (*frequency, *message, DelaySnapshot::default())
-            )
-            .collect();
-
-        let mut message_queue = Self(messages);
-
-        message_queue.0.sort_by_key(|(_, message, _)| message.time());
-
-        message_queue
-    }
-}
-
-impl<const N: usize> From<[(Megahertz, Message); N]> for MessageQueue {
-    fn from(messages: [(Megahertz, Message); N]) -> Self {
-        let messages: Vec<(Megahertz, Message, DelaySnapshot)> = messages
-            .iter()
-            .map(|(frequency, message)| 
-                (*frequency, *message, DelaySnapshot::default())
-            )
-            .collect();
-
-        let mut message_queue = Self(messages);
-
-        message_queue.0.sort_by_key(|(_, message, _)| message.time());
-
-        message_queue
     }
 }
 
@@ -313,7 +218,10 @@ impl ComplexNetwork {
         }
 
         // Preprocess delays to avoid unnecessary function calls in the loop.
-        let delays = self.delays();
+        let delays = self.connections.delays(
+            &self.command_center, 
+            self.delay_multiplier
+        );
 
         let mut infection_messages = Vec::new();
 
@@ -333,24 +241,13 @@ impl ComplexNetwork {
                     match message.message_type() {
                         MessageType::ChangeGoal(_) => 
                             (),
-                        MessageType::Infection => {
-                            let destination_id = message.destination_id();
-
-                            let neighbors = self.connections.neighbors_outgoing(
-                                destination_id
-                            );
-                            
-                            for node in neighbors {
-                                let infection_message = Message::new(
-                                    destination_id,
-                                    node,
-                                    message.time(),
-                                    MessageType::Infection
-                                );
-                                
-                                infection_messages.push(infection_message);
-                            }
-                        },
+                        MessageType::Infection => 
+                            spread_infection_messages(
+                                *frequency,
+                                message,
+                                &self.connections,
+                                &mut infection_messages
+                            ),
                         MessageType::SetDestination(destination) =>
                             self.destination_in_meters = *destination,
                     }
@@ -373,47 +270,14 @@ impl ComplexNetwork {
         }
 
         self.message_queue.remove_finished_messages();
-       
-        let mut infected_drones = Vec::new();
 
-        for infection_message in infection_messages {
-            let Some(drone) = self.drone_map.get(
-                &infection_message.destination_id()
-            ) else {
-                continue;
-            };
-
-            if drone.is_infected() || infected_drones.contains(&drone.id()) {
-                continue;
-            }
-
-            self.message_queue.add_message(
-                WIFI_2_4GHZ_FREQUENCY,
-                infection_message
-            );
-            
-            infected_drones.push(drone.id());
-        }
+        enqueue_infection_messages(
+            &mut self.message_queue,
+            &self.drone_map,
+            &infection_messages
+        );
     }
 
-    // Connections graph should already be created and populated before delay
-    // calculation.
-    #[must_use]
-    fn delays(&self) -> DelaySnapshot {
-        let distances = self.connections.single_source_dijkstra(
-            self.command_center.id()
-        ).expect("Failed to find the shortest paths");
-
-        distances
-            .iter()
-            .map(|(device_id, distance)| {
-                let delay = calculate_delay(*distance, self.delay_multiplier);
-            
-                (*device_id, delay)
-            })
-            .collect()
-    }
- 
     fn suppress_network(&mut self) {
         for ewd in &self.electronic_warfare_devices {
             for drone in self.drone_map.drones_mut() {
@@ -456,12 +320,14 @@ impl FindSignalLevel for ComplexNetwork {
 
 #[cfg(test)]
 mod tests {
-    use crate::communication::{
+    use std::collections::HashMap;
+
+    use crate::signal::{
         GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, RED_SIGNAL_LEVEL, 
         SignalArea, SignalLevel, YELLOW_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
     };
     use crate::device::{CommandCenterBuilder, DroneBuilder};
-    use crate::device::modules::{TRXModule, TRXSystem};
+    use crate::device::systems::{TRXModule, TRXSystem};
     use crate::mathphysics::Meter;
     
     use super::*;
@@ -620,59 +486,6 @@ mod tests {
                 .unwrap_or(&NO_SIGNAL_LEVEL)
                 .is_black()
         );
-    }
-
-    #[test]
-    fn check_delays() {
-        let command_center = CommandCenterBuilder::new()
-            .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: cc_tx_module(),
-                    rx_module: TRXModule::default() 
-                }
-            )
-            .build();
-        let command_center_id = command_center.id();
-
-        let distance = 50.0;
-        let drone = DroneBuilder::new()
-            .set_global_position(Point3D::new(distance, 0.0, 0.0))
-            .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: TRXModule::default(),
-                    rx_module: drone_rx_module() 
-                }
-            )
-            .build();
-        let drone_id = drone.id();
-
-        let mut network = ComplexNetwork::new(
-            command_center, 
-            IdToDroneMap::from([drone]), 
-            Vec::new(), 
-            &Vec::new(), 
-            Topology::Mesh, 
-            0.0
-        );
-
-        let expected_delays = HashMap::from([
-            (network.command_center.id(), 0),
-            (drone_id, 0)
-        ]);
-        let delays = network.delays();
-
-        assert!(expected_delays.eq(&delays));
-
-        let multiplier = 1.0;
-        network.delay_multiplier = multiplier;
-
-        let expected_delays = HashMap::from([
-            (command_center_id, 0),
-            (drone_id, 250)
-        ]);
-        let delays = network.delays();
-
-        assert!(expected_delays.eq(&delays));
     }
 
     #[test]

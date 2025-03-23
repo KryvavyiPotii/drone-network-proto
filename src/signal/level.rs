@@ -1,47 +1,23 @@
-use std::{collections::HashMap, ops};
+use std::ops;
 
-use derive_more::Mul;
 use impl_ops::{
     _impl_binary_op_borrowed_borrowed, _impl_binary_op_borrowed_owned, 
     _impl_binary_op_internal, _impl_binary_op_owned_borrowed, 
     _impl_binary_op_owned_owned, _parse_binary_op, impl_op, impl_op_ex
 };
-use thiserror::Error;
 
 use crate::mathphysics::{wave_length_in_meters, Megahertz, Meter};
+use crate::message::MessageCost;
+use crate::signal::{
+    GREEN_SIGNAL_STRENGTH, MAX_BLACK_SIGNAL_STRENGTH, MAX_RED_SIGNAL_STRENGTH, 
+    MAX_YELLOW_SIGNAL_STRENGTH, NO_SIGNAL_STRENGTH, SignalArea, SignalStrength,
+    SIGNAL_STRENGTH_SCALING,
+};
 
-use super::message::MessageCost;
-
-
-pub const GPS_L1_FREQUENCY: Megahertz = 1_575;
-pub const GPS_L2_FREQUENCY: Megahertz = 1_227;
-pub const WIFI_2_4GHZ_FREQUENCY: Megahertz = 2_400;
-
-pub const CC_TX_CONTROL_AREA: SignalArea    = SignalArea { radius: 300.0 };
-pub const EWD_TX_CONTROL_AREA: SignalArea   = SignalArea { radius: 50.0 };
-pub const EWD_TX_GPS_AREA: SignalArea       = SignalArea { radius: 100.0 };
-pub const DRONE_TX_CONTROL_AREA: SignalArea = SignalArea { radius: 50.0 };
 
 pub const RED_SIGNAL_ZONE_COEFFICIENT: f32    = 0.875;
 pub const YELLOW_SIGNAL_ZONE_COEFFICIENT: f32 = 0.8;
 pub const GREEN_SIGNAL_ZONE_COEFFICIENT: f32  = 0.5;
-
-// Const for proper signal strength scaling at distance.
-const SIGNAL_STRENGTH_SCALING: f32 = 2_500.0; 
-
-pub const GREEN_SIGNAL_STRENGTH_VALUE: f32           = 100.0;
-pub const NO_SIGNAL_STRENGTH: SignalStrength         = SignalStrength(0.0);
-pub const MAX_BLACK_SIGNAL_STRENGTH: SignalStrength  = SignalStrength(1.0);
-// TODO properly convert values
-pub const MAX_RED_SIGNAL_STRENGTH: SignalStrength    = SignalStrength(
-    GREEN_SIGNAL_STRENGTH_VALUE * (1.0 - YELLOW_SIGNAL_ZONE_COEFFICIENT)
-);
-pub const MAX_YELLOW_SIGNAL_STRENGTH: SignalStrength = SignalStrength(
-    GREEN_SIGNAL_STRENGTH_VALUE * (1.0 - GREEN_SIGNAL_ZONE_COEFFICIENT)
-);
-pub const GREEN_SIGNAL_STRENGTH: SignalStrength = SignalStrength(
-    GREEN_SIGNAL_STRENGTH_VALUE
-);
 
 pub const NO_SIGNAL_LEVEL: SignalLevel     =
     SignalLevel(SignalLevelInner::Black(NO_SIGNAL_STRENGTH));
@@ -55,21 +31,6 @@ pub const GREEN_SIGNAL_LEVEL: SignalLevel  =
     SignalLevel(SignalLevelInner::Green(GREEN_SIGNAL_STRENGTH));
 
 
-pub type FreqToLevelMap = HashMap<Megahertz, SignalLevel>;
-
-
-#[must_use]
-pub fn min_signal_strength(
-    signal_strength1: SignalStrength,
-    signal_strength2: SignalStrength
-) -> SignalStrength {
-    if signal_strength1 < signal_strength2 {
-        signal_strength1
-    } else {
-        signal_strength2
-    }
-}
-
 #[must_use]
 pub fn min_signal_level(
     signal_level1: SignalLevel,
@@ -81,147 +42,6 @@ pub fn min_signal_level(
         signal_level2
     }
 }
-
-
-#[derive(Debug, Error)]
-pub enum SignalAreaError {
-    #[error("Negative radius is forbidden")]
-    NegativeRadius
-}
-
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SignalArea {
-    radius: Meter
-}
-
-impl SignalArea {
-    /// # Errors
-    ///
-    /// Will return `Err` if provided radius is a negative number.
-    pub fn build(radius: Meter) -> Result<Self, SignalAreaError> {
-        if radius < 0.0 {
-            return Err(SignalAreaError::NegativeRadius);
-        }
-
-        Ok(Self { radius })
-    }
-   
-    // Inverse operation to SignalLevel::from_area()
-    #[must_use]
-    pub fn from_strength(
-        tx_signal_strength: SignalStrength,
-        frequency: Megahertz
-    ) -> Self {
-        let wave_length = wave_length_in_meters(frequency);
-
-        let radius = if tx_signal_strength <= MAX_BLACK_SIGNAL_STRENGTH {
-            0.0
-        } else {
-            // The area radius is a minimal distance from the tx at which 
-            // the signal level is black.
-            // So, the actual formula is:
-            //     radius = wave_length * (
-            //         tx_signal_strength / MAX_BLACK_SIGNAL_STRENGTH
-            //     ).sqrt()
-            // We do not use division by MAX_BLACK_SIGNAL_STRENGTH because it 
-            // is equal to 1.0.
-            wave_length * (
-                tx_signal_strength.0 * SIGNAL_STRENGTH_SCALING
-            ).sqrt() 
-        } as Meter;
-        
-        Self { radius }
-    }
-    
-    #[must_use]
-    pub fn from_level(
-        tx_signal_level: SignalLevel,
-        frequency: Megahertz
-    ) -> Self {
-        Self::from_strength(tx_signal_level.strength(), frequency)
-    }
-
-    #[must_use]
-    pub fn radius(&self) -> Meter {
-        self.radius
-    }
-
-    /// # Errors
-    ///
-    /// Will return `Err` if provided radius is a negative number.
-    pub fn set_radius(&mut self, radius: Meter) -> Result<(), SignalAreaError> {
-        if radius < 0.0 {
-            return Err(SignalAreaError::NegativeRadius);
-        }
-
-        self.radius = radius;
-
-        Ok(())
-    }
-}
-
-
-#[derive(Clone, Copy, Debug, Default, Mul, PartialEq, PartialOrd)]
-pub struct SignalStrength(f32);
-
-impl SignalStrength {
-    #[must_use]
-    pub fn new(value: f32) -> Self {
-        Self(value)
-    }
-
-    #[must_use]
-    pub fn value(&self) -> f32 {
-        self.0
-    }
-}
-
-impl_op_ex!(
-    + |a: &SignalStrength, b: &SignalStrength| -> SignalStrength { 
-        SignalStrength(a.0 + b.0)
-    }
-);
-impl_op_ex!(
-    + |a: &SignalStrength, b: &MessageCost| -> SignalStrength { 
-        SignalStrength(a.0 + b.value()) 
-    }
-);
-impl_op_ex!(
-    + |a: &SignalStrength, b: &f32| -> SignalStrength { 
-        SignalStrength(a.0 + b) 
-    }
-);
-impl_op_ex!(
-    - |a: &SignalStrength, b: &SignalStrength| -> SignalStrength { 
-        SignalStrength(a.0 - b.0) 
-    }
-);
-impl_op_ex!(
-    - |a: &SignalStrength, b: &MessageCost| -> SignalStrength { 
-        SignalStrength(a.0 - b.value()) 
-    }
-);
-impl_op_ex!(
-    - |a: &SignalStrength, b: &f32| -> SignalStrength { 
-        SignalStrength(a.0 - b) 
-    }
-);
-impl_op_ex!(
-    / |a: &SignalStrength, b: &SignalStrength| -> SignalStrength { 
-        SignalStrength(a.0 / b.0) 
-    }
-);
-impl_op_ex!(
-    / |a: &SignalStrength, b: &MessageCost| -> SignalStrength { 
-        SignalStrength(a.0 / b.value()) 
-    }
-);
-impl_op_ex!(
-    / |a: &SignalStrength, b: &f32| -> SignalStrength { 
-        SignalStrength(a.0 / b) 
-    }
-);
 
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug, Default)]
@@ -242,7 +62,7 @@ impl SignalLevel {
         // We do not use multiplication by MAX_BLACK_SIGNAL_STRENGTH because it 
         // is equal to 1.0.
         let tx_signal_strength = (
-            signal_area.radius / wave_length
+            signal_area.radius() / wave_length
         ).powi(2) / SIGNAL_STRENGTH_SCALING;
 
         Self(SignalLevelInner::from(tx_signal_strength))
@@ -263,7 +83,7 @@ impl SignalLevel {
             wave_length.powi(2)
         } else {
             (wave_length / distance).powi(2)
-        } * self.strength().0 * SIGNAL_STRENGTH_SCALING; 
+        } * self.strength().value() * SIGNAL_STRENGTH_SCALING; 
 
         let signal_level_inner = SignalLevelInner::from(rx_signal_strength);
 
@@ -272,7 +92,7 @@ impl SignalLevel {
 
     #[must_use]
     pub fn at_by_zone(&self, frequency: Megahertz, distance: Meter) -> Self {
-        let radius = SignalArea::from_level(*self, frequency).radius;
+        let radius = SignalArea::from_level(*self, frequency).radius();
 
         if distance <= radius * GREEN_SIGNAL_ZONE_COEFFICIENT {
             *self
@@ -464,7 +284,6 @@ impl From<SignalStrength> for SignalLevelInner {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,12 +389,12 @@ mod tests {
         )
     }
 
-
+    
     #[test]
     fn negative_signal_strength_is_allowed() {
         assert_eq!(
             -10.0, 
-            SignalLevel::from(-10.0).strength().0
+            SignalLevel::from(-10.0).strength().value()
         );
     }
 
@@ -700,42 +519,6 @@ mod tests {
             GREEN_SIGNAL_LEVEL
                 .at(frequency, 3.0)
                 .is_green()
-        );
-    }
-
-    #[test]
-    fn signal_area_from_black_signal() {
-        let negative_strength = SignalStrength::new(-5.0);
-        let zero_strength = SignalStrength::default();
-        let negligible_strength = SignalStrength::new(0.5);
-        let frequency = 5_000;
-
-        assert_eq!(
-            0.0, 
-            SignalArea::from_strength(negative_strength, frequency)
-                .radius()
-        );
-        assert_eq!(
-            0.0, 
-            SignalArea::from_strength(zero_strength, frequency)
-                .radius()
-        );
-        assert_eq!(
-            0.0, 
-            SignalArea::from_strength(negligible_strength, frequency)
-                .radius()
-        );
-    }
-    
-    #[test]
-    fn signal_area_from_nonblack_signal() {
-        let frequency = 5_000;
-
-        assert_eq!(
-            30.0,
-            SignalArea::from_level(GREEN_SIGNAL_LEVEL, frequency)
-                .radius()
-                .round()
         );
     }
 

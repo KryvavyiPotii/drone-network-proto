@@ -3,22 +3,22 @@ use std::ops::Range;
 
 use rand::prelude::*;
 
-use crate::communication::{
-    Goal, Message, MessageType, CC_TX_CONTROL_AREA, DRONE_TX_CONTROL_AREA, 
-    EWD_TX_CONTROL_AREA, EWD_TX_GPS_AREA, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
-    SignalLevel, WIFI_2_4GHZ_FREQUENCY
-};
 use crate::device::{
     CommandCenterBuilder, Device, DeviceId, Drone, DroneBuilder, 
-    ElectronicWarfareBuilder, UNKNOWN_ID,
+    ElectronicWarfareBuilder, Topology, UNKNOWN_ID,
 };
-use crate::device::networkmodel::{
-    NetworkModelBuilder, NetworkModelType, Topology
-}; 
-use crate::device::modules::{TRXModule, TRXSystem};
+use crate::device::networkmodel::{NetworkModelBuilder, NetworkModelType}; 
+use crate::device::systems::{TRXModule, TRXSystem};
 use crate::mathphysics::{Megahertz, Point3D};
-use crate::simulation::{
-    Axes3DRanges, DroneColoring, END_TIME, PlottersRenderer, Simulation
+use crate::message::{Goal, Message, MessageType};
+use crate::signal::{
+    CC_TX_CONTROL_AREA, DRONE_TX_CONTROL_AREA, EWD_TX_CONTROL_AREA, 
+    EWD_TX_GPS_AREA, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, SignalLevel, 
+    WIFI_2_4GHZ_FREQUENCY
+};
+use crate::simulation::{END_TIME, Simulation};
+use crate::simulation::renderer::{
+    Axes3DRanges, DroneColoring, PlottersRenderer
 };
 
 use super::{AntennaType, Config};

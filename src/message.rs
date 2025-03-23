@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops;
 
 use derive_more::{Add, Mul};
@@ -8,10 +9,19 @@ use impl_ops::{
 };
 use thiserror::Error;
 
-use crate::device::{DeviceId, networkmodel::ConnectionGraph}; 
-use crate::mathphysics::{Megahertz, Millisecond, Point3D};
+use crate::device::{DeviceId, ConnectionGraph}; 
+use crate::mathphysics::{Millisecond, Point3D};
 
 use super::signal::GREEN_SIGNAL_STRENGTH_VALUE;
+
+
+pub use queue::MessageQueue;
+
+
+pub mod queue;
+
+
+pub type DelaySnapshot = HashMap<DeviceId, u32>;
 
 
 pub const CHANGE_GOAL_COST: MessageCost     = MessageCost(
@@ -223,134 +233,24 @@ impl Message {
     }
 }
 
-
-#[derive(Clone, Debug, Default)]
-pub struct MessageQueue(Vec<(Megahertz, Message)>);
-
-impl MessageQueue {
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-    
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    
-    pub fn iter(&self) -> std::slice::Iter<'_, (Megahertz, Message)> {
-        self.0.iter()
-    }
-
-    pub fn iter_mut(
-        &mut self
-    ) -> std::slice::IterMut<'_, (Megahertz, Message)> {
-        self.0.iter_mut()
-    }
-    
-    pub fn add_message(&mut self, frequency: Megahertz, message: Message) {
-        self.0.push((frequency, message));
-        self.0.sort_by_key(|(_, message)| message.time());
-    }
-
-    pub fn remove_finished_messages(&mut self) {
-        self.0.retain(|(_, message)| !message.is_finished());
-    }
-}
-
-impl<'a> IntoIterator for &'a MessageQueue{
-    type Item = &'a (Megahertz, Message);
-    type IntoIter = std::slice::Iter<'a, (Megahertz, Message)>;
-    
-    fn into_iter(self) -> Self::IntoIter {
-         self.iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a mut MessageQueue{
-    type Item = &'a mut (Megahertz, Message);
-    type IntoIter = std::slice::IterMut<'a, (Megahertz, Message)>;
-    
-    fn into_iter(self) -> Self::IntoIter {
-         self.iter_mut()
-    }
-}
-
-impl From<&[(Megahertz, Message)]> for MessageQueue {
-    fn from(messages: &[(Megahertz, Message)]) -> Self {
-        let mut message_queue = Self(messages.to_vec());
-
-        message_queue.0.sort_by_key(|(_, message)| message.time());
-
-        message_queue
-    }
-}
-
-impl<const N: usize> From<[(Megahertz, Message); N]> for MessageQueue {
-    fn from(messages: [(Megahertz, Message); N]) -> Self {
-        let mut message_queue = Self(messages.to_vec());
-
-        message_queue.0.sort_by_key(|(_, message)| message.time());
-
-        message_queue
-    }
-}
-
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use crate::communication::GREEN_SIGNAL_LEVEL;
     use crate::device::{
         CommandCenter, CommandCenterBuilder, Device, DeviceId, Drone,
         DroneBuilder, UNKNOWN_ID
     };
-    use crate::device::modules::{TRXModule, TRXSystem};
-    use crate::device::networkmodel::{IdToDroneMap, Topology};
+    use crate::device::{IdToDroneMap, Topology};
+    use crate::device::systems::{TRXModule, TRXSystem};
+    use crate::mathphysics::Megahertz;
+    use crate::signal::GREEN_SIGNAL_LEVEL;
 
     use super::*;
 
 
     const SOME_FREQUENCY: Megahertz = 2_000;
 
-
-    fn message_vec() -> Vec<(Megahertz, Message)> {
-        vec![
-            (
-                SOME_FREQUENCY,
-                Message::new(
-                    2, 
-                    3, 
-                    25, 
-                    MessageType::ChangeGoal(Goal::Reposition)
-                )
-            ),
-            (
-                SOME_FREQUENCY,
-                Message::new(
-                    1, 
-                    2, 
-                    5, 
-                    MessageType::ChangeGoal(Goal::Reposition)
-                )
-            ),
-            (
-                SOME_FREQUENCY,
-                Message::new(
-                    1, 
-                    3, 
-                    10, 
-                    MessageType::ChangeGoal(Goal::Reposition)
-                )
-            )
-        ]
-    }
 
     fn simple_trx_system() -> TRXSystem {
         TRXSystem::Color(
@@ -391,21 +291,6 @@ mod tests {
     }
 
 
-    #[test]
-    fn removing_finished_messages() {
-        let mut messages = message_vec();
-
-        messages[1].1.finish();
-
-        let mut message_queue = MessageQueue::from(messages.as_slice());
-        message_queue.remove_finished_messages();
-
-        assert_eq!(message_queue.len(), 2);
-        for (_, message) in message_queue.iter() {
-            assert!(!message.is_finished());
-        }
-    }
-   
     #[test]
     fn preprocessing_already_preprocessed_message() {
         let current_time = 10;

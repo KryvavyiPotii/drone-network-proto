@@ -1,13 +1,12 @@
 use std::hash::{Hash, Hasher};
 
-use crate::communication::{
-    FreqToLevelMap, Message, SignalArea, SignalLevel
-};
 use crate::device::{
     Device, DeviceId, Receiver, Transceiver, Transmitter, generate_device_id,
 };
-use crate::device::modules::{ReceiveMessageError, TRXSystem};
+use crate::device::systems::{ReceiveMessageError, TRXSystem};
 use crate::mathphysics::{Megahertz, Meter, Point3D, Position};
+use crate::message::Message;
+use crate::signal::{FreqToLevelMap, SignalArea, SignalLevel};
 
 
 pub struct CommandCenterBuilder {

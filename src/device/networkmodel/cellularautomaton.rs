@@ -2,18 +2,21 @@ use std::collections::hash_map::Values;
 
 use rand::prelude::*;
 
-use crate::communication::{
-    GPS_L1_FREQUENCY, Message, MessagePreprocessError, MessageQueue, 
-    MessageType, NO_SIGNAL_LEVEL, SignalLevel, WIFI_2_4GHZ_FREQUENCY
-};
 use crate::device::{
-    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, Receiver, 
-    STEP_DURATION, Suppressor, Transceiver, Transmitter, UNKNOWN_ID,
+    CommandCenter, ConnectionGraph, DeviceId, Drone, ElectronicWarfare, 
+    FindSignalLevel, IdToDroneMap, IdToLevelMap, Receiver, STEP_DURATION, 
+    Suppressor, Topology, Transceiver, Transmitter, UNKNOWN_ID,
 };
 use crate::device::networkmodel::{
-    ConnectionGraph, FindSignalLevel, IdToDroneMap, IdToLevelMap, Topology
+    enqueue_infection_messages, spread_infection_messages
 };
 use crate::mathphysics::{Megahertz, Millisecond, Point3D};
+use crate::message::{
+    Message, MessagePreprocessError, MessageQueue, MessageType
+};
+use crate::signal::{
+    GPS_L1_FREQUENCY, NO_SIGNAL_LEVEL, SignalLevel, WIFI_2_4GHZ_FREQUENCY
+};
 
 
 const CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY: f32  = 0.95;
@@ -236,7 +239,7 @@ impl CellularAutomaton {
 
         let mut infection_messages = Vec::new();
         
-        for (frequency, message) in &mut self.message_queue {
+        for (frequency, message, _) in &mut self.message_queue {
             match message.try_preprocess(
                 self.current_time, 
                 &self.connections
@@ -250,24 +253,13 @@ impl CellularAutomaton {
                     match message.message_type() {
                         MessageType::ChangeGoal(_) => 
                             (),
-                        MessageType::Infection => {
-                            let destination_id = message.destination_id();
-
-                            let neighbors = self.connections.neighbors_outgoing(
-                                destination_id
-                            );
-
-                            for node in neighbors {
-                                let infection_message = Message::new(
-                                    destination_id,
-                                    node,
-                                    message.time(),
-                                    MessageType::Infection
-                                );
-                                
-                                infection_messages.push(infection_message);
-                            }
-                        },
+                        MessageType::Infection => 
+                            spread_infection_messages(
+                                *frequency,
+                                message,
+                                &self.connections,
+                                &mut infection_messages
+                            ),
                         MessageType::SetDestination(destination) =>
                             self.destination_in_meters = *destination,
                     }
@@ -280,26 +272,11 @@ impl CellularAutomaton {
         
         self.message_queue.remove_finished_messages();
         
-        let mut infected_drones = Vec::new();
-
-        for infection_message in infection_messages {
-            let Some(drone) = self.drone_map.get(
-                &infection_message.destination_id()
-            ) else {
-                continue;
-            };
-
-            if drone.is_infected() || infected_drones.contains(&drone.id()) {
-                continue;
-            }
-
-            self.message_queue.add_message(
-                WIFI_2_4GHZ_FREQUENCY,
-                infection_message
-            );
-            
-            infected_drones.push(drone.id());
-        }
+        enqueue_infection_messages(
+            &mut self.message_queue,
+            &self.drone_map,
+            &infection_messages
+        );
     }
 
     fn suppress_network(&mut self) {
@@ -339,12 +316,12 @@ impl FindSignalLevel for CellularAutomaton {
 mod tests {
     use std::collections::HashMap;
     
-    use crate::communication::{
+    use crate::signal::{
         GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE,
         SignalArea
     };
     use crate::device::{CommandCenterBuilder, Device, DroneBuilder};
-    use crate::device::modules::{TRXModule, TRXSystem};
+    use crate::device::systems::{TRXModule, TRXSystem};
     use crate::mathphysics::Meter;
     
     use super::*;

@@ -1,31 +1,17 @@
 use thiserror::Error;
 
-use crate::communication::{
-    BLACK_SIGNAL_LEVEL, FreqToLevelMap, Message, NO_SIGNAL_LEVEL, SignalArea, 
-    SignalLevel, min_signal_level
-};
 use crate::mathphysics::{Megahertz, Meter};
+use crate::message::Message;
+use crate::signal::{
+    BLACK_SIGNAL_LEVEL, FreqToLevelMap, NO_SIGNAL_LEVEL, SignalArea, SignalLevel
+};
 
 
-fn current_signal_levels_are_not_higher_than_max(
-    current_signal_levels: &FreqToLevelMap,
-    max_signal_levels: &FreqToLevelMap
-) -> bool {
-    current_signal_levels
-        .iter()
-        .all(|(frequency, signal_level)|
-            *signal_level <= *max_signal_levels
-                                .get(frequency)
-                                .unwrap_or(&NO_SIGNAL_LEVEL)
-        )
-}
+pub use modules::*;
 
 
-#[derive(Error, Debug)]
-pub enum TRXModuleBuildError {
-    #[error("Signal levels are higher than max signal levels")]
-    SignalLevelsHigherThanMax,
-}
+pub mod modules;
+
 
 #[derive(Error, Debug)]
 pub enum ReceiveMessageError {
@@ -33,81 +19,6 @@ pub enum ReceiveMessageError {
     TooExpensive,
     #[error("Message destination ID does not match device ID")]
     WrongDestination,
-}
-
-
-// By default we create a non-functioning TRXModule.
-#[derive(Clone, Debug, Default)]
-pub struct TRXModule {
-    max_signal_levels: FreqToLevelMap,
-    signal_levels: FreqToLevelMap
-}
-
-impl TRXModule {
-    /// # Errors
-    ///
-    /// Will return `Err` if provided signal levels are higher than provided
-    /// maximum signal levels.
-    pub fn build(
-        max_signal_levels: FreqToLevelMap,
-        signal_levels: FreqToLevelMap
-    ) -> Result<Self, TRXModuleBuildError> {
-        if !current_signal_levels_are_not_higher_than_max(
-            &signal_levels, 
-            &max_signal_levels
-        ) {
-            return Err(TRXModuleBuildError::SignalLevelsHigherThanMax);
-        }
-
-        Ok(Self { max_signal_levels, signal_levels })
-    }
-
-    #[must_use]
-    pub fn max_signal_levels(&self) -> &FreqToLevelMap {
-        &self.max_signal_levels
-    }
-    
-    #[must_use]
-    pub fn max_signal_level(&self, frequency: Megahertz) -> &SignalLevel {
-        self.max_signal_levels
-            .get(&frequency)
-            .unwrap_or(&NO_SIGNAL_LEVEL)
-    }
-    
-    #[must_use]
-    pub fn signal_levels(&self) -> &FreqToLevelMap {
-        &self.signal_levels
-    }
-
-    #[must_use]
-    pub fn signal_level(&self, frequency: Megahertz) -> &SignalLevel {
-        self.signal_levels
-            .get(&frequency)
-            .unwrap_or(&NO_SIGNAL_LEVEL)
-    }
-    
-    pub fn set_signal_levels(&mut self, signal_levels: &FreqToLevelMap) {
-        signal_levels
-            .iter()
-            .for_each(|(frequency, signal_level)|
-                self.set_signal_level(*frequency, *signal_level)
-            );
-    }
-    
-    pub fn set_signal_level(
-        &mut self, 
-        frequency: Megahertz,
-        signal_level: SignalLevel
-    ) {
-        let max_signal_level = *self.max_signal_level(frequency);
-
-        let new_signal_level = min_signal_level(
-            signal_level,
-            max_signal_level
-        );
-
-        self.signal_levels.insert(frequency, new_signal_level);
-    }
 }
 
 
@@ -412,51 +323,15 @@ impl Default for TRXSystem {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::communication::{
-        Goal, MessageType, SignalStrength, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
-        RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY, YELLOW_SIGNAL_LEVEL
-    }; 
     use crate::device::UNKNOWN_ID;
+    use crate::message::{Goal, Message, MessageType};
+    use crate::signal::{
+        SignalStrength, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL, 
+        WIFI_2_4GHZ_FREQUENCY, YELLOW_SIGNAL_LEVEL
+    };
 
     use super::*;
 
-
-    #[test]
-    fn checking_if_signal_level_higher_than_max() {
-        let absent_max_signal_levels = HashMap::new();
-        let current_signal_levels = HashMap::from([
-            (GPS_L1_FREQUENCY, YELLOW_SIGNAL_LEVEL)
-        ]);
-
-        assert!(
-            !current_signal_levels_are_not_higher_than_max(
-                &current_signal_levels, 
-                &absent_max_signal_levels
-            )
-        );
-        
-        let too_low_max_signal_levels = HashMap::from([
-            (GPS_L1_FREQUENCY, RED_SIGNAL_LEVEL)
-        ]);
-
-        assert!(
-            !current_signal_levels_are_not_higher_than_max(
-                &current_signal_levels, 
-                &too_low_max_signal_levels
-            )
-        );
-
-        let correct_max_signal_levels = HashMap::from([
-            (GPS_L1_FREQUENCY, YELLOW_SIGNAL_LEVEL)
-        ]);
-
-        assert!(
-            current_signal_levels_are_not_higher_than_max(
-                &current_signal_levels, 
-                &correct_max_signal_levels
-            )
-        );
-    }
 
     #[test]
     fn setting_even_or_too_high_rx_signal_levels() {

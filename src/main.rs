@@ -3,13 +3,15 @@ use std::io::Write;
 use clap::{Command, Arg};
 use env_logger::{Builder, Target};
 
-use device::networkmodel::{Topology, NetworkModelType};
+use device::Topology;
+use device::networkmodel::NetworkModelType;
 
 
-pub mod communication;
 pub mod device;
 pub mod examples;
 pub mod mathphysics;
+pub mod message;
+pub mod signal;
 pub mod simulation;
 
 
@@ -31,7 +33,7 @@ fn configure_logging() {
 
 fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.4.0")
+        .version("0.5.0")
         .about("Models drone networks")
         .arg(
             Arg::new("example")
@@ -119,7 +121,7 @@ fn cli() {
                 &Config::new(
                     "Complex network (Mesh, infection)",
                     false,
-                    NetworkModelType::ComplexNetwork(5.0),
+                    NetworkModelType::ComplexNetwork(25.0),
                     Topology::Mesh
                 )
             ),

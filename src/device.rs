@@ -1,20 +1,25 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::communication::{FreqToLevelMap, Message, SignalArea, SignalLevel};
 use crate::mathphysics::{Megahertz, Meter, Millisecond, Position};
+use crate::message::Message;
+use crate::signal::{FreqToLevelMap, SignalArea, SignalLevel};
 
-use self::modules::ReceiveMessageError;
+use systems::ReceiveMessageError;
 
 
 pub use cc::*;
+pub use connections::*;
 pub use drone::*;
 pub use ewd::*;
+pub use idmaps::{IdToDroneMap, IdToLevelMap};
 
 
 pub mod cc;
+pub mod connections;
 pub mod drone;
 pub mod ewd; 
-pub mod modules;
+pub mod idmaps;
+pub mod systems;
 pub mod networkmodel;
 
 
@@ -141,12 +146,12 @@ fn generate_device_id() -> DeviceId {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::communication::{
+    use crate::signal::{
         BLACK_SIGNAL_LEVEL, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
         NO_SIGNAL_LEVEL, RED_SIGNAL_LEVEL, SignalArea, WIFI_2_4GHZ_FREQUENCY
     };
     use crate::device::{CommandCenterBuilder, DroneBuilder};
-    use crate::device::modules::{TRXModule, TRXSystem};
+    use crate::device::systems::{TRXModule, TRXSystem};
     use crate::mathphysics::{Meter, Point3D};
     
     use super::*;
