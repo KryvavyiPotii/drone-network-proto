@@ -427,7 +427,7 @@ mod tests {
             UNKNOWN_ID,
             UNKNOWN_ID,
             0, 
-            MessageType::ChangeGoal(Goal::Attack)
+            MessageType::SetGoal(Goal::Undefined)
         );
 
         let barely_green_signal_level = 
@@ -459,7 +459,7 @@ mod tests {
             UNKNOWN_ID,
             UNKNOWN_ID,
             0, 
-            MessageType::ChangeGoal(Goal::Attack)
+            MessageType::SetGoal(Goal::Undefined)
         );
 
         let mut strength_rx_system = TRXSystem::Strength {
@@ -485,7 +485,7 @@ mod tests {
             UNKNOWN_ID,
             UNKNOWN_ID,
             0, 
-            MessageType::ChangeGoal(Goal::Attack)
+            MessageType::SetGoal(Goal::Undefined)
         );
         
         let barely_green_signal_level = 

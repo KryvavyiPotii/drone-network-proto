@@ -74,6 +74,7 @@ impl<'a> Simulation<'a> {
         let begin = self.current_time_in_millis;
         let end = self.end_time_in_millis;
 
+        info!("Output filename: {}", self.renderer.output_filename());
         for _ in (begin..end).step_by(STEP_DURATION as usize) {
             if !running.load(std::sync::atomic::Ordering::SeqCst) { 
                 info!(

@@ -1,27 +1,31 @@
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use crate::device::{
-    Device, DeviceId, Receiver, Transceiver, Transmitter, generate_device_id,
+    Device, DeviceId, Receiver, Transceiver, Transmitter, UNKNOWN_ID, 
+    generate_device_id,
 };
 use crate::device::systems::{ReceiveMessageError, TRXSystem};
+use crate::infection::{InfectionState, InfectionType};
 use crate::mathphysics::{Megahertz, Meter, Point3D, Position};
 use crate::message::Message;
 use crate::signal::{FreqToLevelMap, SignalArea, SignalLevel};
 
 
+#[derive(Clone, Debug)]
 pub struct CommandCenterBuilder {
-    id: DeviceId,
     position: Option<Point3D>,
-    trx_system: Option<TRXSystem>
+    trx_system: Option<TRXSystem>,
+    vulnerabilities: Option<Vec<InfectionType>>
 }
 
 impl CommandCenterBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            id: generate_device_id(),
             position: None,
-            trx_system: None
+            trx_system: None,
+            vulnerabilities: None
         }
     }
     
@@ -36,13 +40,23 @@ impl CommandCenterBuilder {
         self.trx_system = Some(trx_system);
         self
     }
+    
+    #[must_use]
+    pub fn set_vulnerabilities(
+        mut self, 
+        vulnerabilities: &[InfectionType]
+    ) -> Self {
+        self.vulnerabilities = Some(vulnerabilities.to_vec());
+        self
+    }
 
     #[must_use]
     pub fn build(self) -> CommandCenter {
         CommandCenter::new(
-            self.id,
+            generate_device_id(),
             self.position.unwrap_or_default(),
-            self.trx_system.unwrap_or_default()
+            self.trx_system.unwrap_or_default(),
+            self.vulnerabilities.unwrap_or_default().as_ref()
         )
     }
 }
@@ -58,7 +72,8 @@ impl Default for CommandCenterBuilder {
 pub struct CommandCenter {
     id: DeviceId,
     position_in_meters: Point3D,
-    trx_system: TRXSystem
+    trx_system: TRXSystem,
+    infection_states: HashMap<InfectionType, InfectionState>
 }
 
 impl CommandCenter {
@@ -66,22 +81,34 @@ impl CommandCenter {
     pub fn new(
         id: DeviceId, 
         position_in_meters: Point3D,
-        trx_system: TRXSystem
+        trx_system: TRXSystem,
+        vulnerabilities: &[InfectionType]
     ) -> Self {
+        let infection_states = vulnerabilities
+            .iter()
+            .map(|infection_type| (*infection_type, InfectionState::Vulnerable))
+            .collect();
+        
         Self {
             id,
             position_in_meters,
-            trx_system
+            trx_system,
+            infection_states
         }
     }
 }
 
 impl Default for CommandCenter {
     fn default() -> Self {
+        let infection_states = HashMap::from([
+            (InfectionType::Jamming, InfectionState::Vulnerable),
+        ]);
+
         Self {
             id: generate_device_id(),
             position_in_meters: Point3D::default(),
-            trx_system: TRXSystem::default()
+            trx_system: TRXSystem::default(),
+            infection_states
         }
     }
 }
@@ -107,6 +134,12 @@ impl Position for CommandCenter {
 impl Device for CommandCenter {
     fn id(&self) -> DeviceId {
         self.id
+    }
+
+    fn infection_states(
+        &self, 
+    ) -> &HashMap<InfectionType, InfectionState> {
+        &self.infection_states
     }
 }
 
@@ -200,6 +233,12 @@ impl Receiver for CommandCenter {
         frequency: Megahertz,
         message: &Message
     ) -> Result<(), ReceiveMessageError> {
+        let destination_id = message.destination_id();
+
+        if destination_id != UNKNOWN_ID && self.id() != destination_id {
+            return Err(ReceiveMessageError::WrongDestination);
+        }
+
         self.trx_system.receive_message(frequency, message) 
     }
 

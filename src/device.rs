@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::infection::{InfectionState, InfectionType};
 use crate::mathphysics::{Megahertz, Meter, Millisecond, Position};
 use crate::message::Message;
 use crate::signal::{FreqToLevelMap, SignalArea, SignalLevel};
@@ -35,6 +37,24 @@ static FREE_DEVICE_ID: AtomicUsize = AtomicUsize::new(1);
 
 pub trait Device: Position {
     fn id(&self) -> DeviceId;
+    fn infection_states(&self) -> &HashMap<InfectionType, InfectionState>;
+    
+    fn is_infected(&self) -> bool {
+        self.infection_states()
+            .values()
+            .any(|infection_state| 
+                matches!(infection_state, InfectionState::Infected)
+            )
+    }
+    
+    fn infection_state(
+        &self, 
+        infection_type: &InfectionType
+    ) -> &InfectionState {
+        self.infection_states()
+            .get(infection_type)
+            .unwrap_or(&InfectionState::Patched)
+    } 
 }
 
 pub trait Transmitter: Device {
@@ -157,8 +177,6 @@ mod tests {
     use super::*;
     
 
-    // These constants were introduced for testing independently from the global
-    // constants.
     const CC_TX_CONTROL_RADIUS: Meter    = 300.0;
     const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
     const EWD_TX_CONTROL_RADIUS: Meter   = 100.0;

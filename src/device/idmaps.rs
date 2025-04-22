@@ -87,8 +87,26 @@ impl IdToDroneMap {
             .for_each(Drone::update_state);
     }
 
+    pub fn handle_infection(&mut self) {
+        self.0
+            .values_mut()
+            .for_each(Drone::handle_infection);
+    }
+
     pub fn remove_uncontrolled_drones(&mut self, frequency: Megahertz) { 
         self.0.retain(|_, drone| drone.receives_signal(frequency));
+    }
+    
+    pub fn set_tx_signal_level(
+        &mut self,
+        frequency: Megahertz,
+        signal_level: &SignalLevel,
+    ) {
+        self.0
+            .values_mut()
+            .for_each(|drone| 
+                drone.set_tx_signal_level(frequency, *signal_level)
+            );
     }
     
     pub fn set_tx_signal_levels(
@@ -103,6 +121,18 @@ impl IdToDroneMap {
 
             drone.set_tx_signal_level(frequency, *signal_level);
         }
+    }
+    
+    pub fn set_rx_signal_level(
+        &mut self,
+        frequency: Megahertz,
+        signal_level: &SignalLevel,
+    ) {
+        self.0
+            .values_mut()
+            .for_each(|drone| 
+                drone.set_rx_signal_level(frequency, *signal_level)
+            );
     }
 
     pub fn set_rx_signal_levels(

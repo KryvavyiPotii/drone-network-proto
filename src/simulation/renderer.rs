@@ -10,8 +10,8 @@ use crate::signal::{
     SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
 };
 use crate::device::{
-    CommandCenter, DESTINATION_RADIUS, Drone, ElectronicWarfare, STEP_DURATION, 
-    Transceiver, Transmitter, 
+    CommandCenter, DESTINATION_RADIUS, Device, Drone, ElectronicWarfare, 
+    STEP_DURATION, Transceiver, Transmitter, 
 };
 use crate::device::networkmodel::{
     NetworkModel, get_drone_networks_destinations
@@ -37,7 +37,7 @@ fn get_destination_primitive(
     screen_height: u32,
 ) -> Circle<(f64, f64, f64), u32> {
     let point = plotters_point_from_point3d(destination);
-    let radius = convert_meters_to_pixels(
+    let radius = meters_to_pixels(
         DESTINATION_RADIUS,
         screen_height
     );
@@ -50,7 +50,7 @@ fn get_command_center_primitive(
     screen_height: u32,
 ) -> Circle<(f64, f64, f64), u32> {
     let point = plotters_point_from_point3d(command_center.position());
-    let radius = convert_meters_to_pixels(
+    let radius = meters_to_pixels(
         COMMAND_CENTER_RADIUS,
         screen_height
     );  
@@ -73,13 +73,12 @@ fn get_ewd_primitive(
     frequency: Megahertz,
     screen_height: u32
 ) -> Circle<(f64, f64, f64), u32> {
+    let radius = ewd
+        .area(frequency)
+        .radius();
+
     let point = plotters_point_from_point3d(ewd.position());
-    let ewd_coverage = convert_meters_to_pixels(
-        ewd
-            .area(frequency)
-            .radius(), 
-        screen_height
-    );
+    let ewd_coverage = meters_to_pixels(radius, screen_height);
     let area_color = match frequency {
         GPS_L1_FREQUENCY | GPS_L2_FREQUENCY => RED,
         WIFI_2_4GHZ_FREQUENCY => BLUE,
@@ -97,7 +96,7 @@ fn plotters_point_from_point3d(point: &Point3D) -> (f64, f64, f64) {
     )
 }
 
-fn convert_meters_to_pixels(
+fn meters_to_pixels(
     value: Meter,
     screen_height: u32
 ) -> u32 {
@@ -188,6 +187,7 @@ pub enum DroneColoring {
 
 
 pub struct PlottersRenderer<'a> {
+    output_filename: String,
     caption: String,
     screen_resolution: (u32, u32),
     axes_ranges: Axes3DRanges,
@@ -208,7 +208,7 @@ impl<'a> PlottersRenderer<'a> {
     /// Will panic if an error occurs during bitmap backend creation. 
     #[must_use]
     pub fn new(
-        output_path: &str,
+        output_filename: &str,
         caption: &str,
         screen_resolution: (u32, u32),
         axes_ranges: Axes3DRanges,
@@ -216,9 +216,9 @@ impl<'a> PlottersRenderer<'a> {
         pitch: f64,
         yaw: f64
     ) -> Self {
-        let output_path = output_path.to_string();
+        let output_filename = output_filename.to_string();
         let area = BitMapBackend::gif(
-            &output_path, 
+            &output_filename, 
             screen_resolution,
             STEP_DURATION
         ).unwrap().into_drawing_area();
@@ -232,6 +232,7 @@ impl<'a> PlottersRenderer<'a> {
         ); 
 
         Self {
+            output_filename,
             caption: caption.to_string(),
             screen_resolution,
             axes_ranges,
@@ -241,6 +242,11 @@ impl<'a> PlottersRenderer<'a> {
             pitch,
             yaw
         }
+    }
+
+    #[must_use]
+    pub fn output_filename(&self) -> String {
+        self.output_filename.clone()
     }
 
     /// # Panics
@@ -266,6 +272,7 @@ impl<'a> PlottersRenderer<'a> {
                 axes_ranges.y.clone(),
                 axes_ranges.z.clone(),
             ).unwrap();
+
         chart.with_projection(|mut p| {
             p.pitch = pitch;
             p.yaw = yaw;

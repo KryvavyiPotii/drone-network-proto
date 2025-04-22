@@ -108,7 +108,7 @@ mod tests {
                     2, 
                     3, 
                     25, 
-                    MessageType::ChangeGoal(Goal::Reposition)
+                    MessageType::SetGoal(Goal::Undefined)
                 )
             ),
             (
@@ -117,7 +117,7 @@ mod tests {
                     1, 
                     2, 
                     5, 
-                    MessageType::ChangeGoal(Goal::Reposition)
+                    MessageType::SetGoal(Goal::Undefined)
                 )
             ),
             (
@@ -126,7 +126,7 @@ mod tests {
                     1, 
                     3, 
                     10, 
-                    MessageType::ChangeGoal(Goal::Reposition)
+                    MessageType::SetGoal(Goal::Undefined)
                 )
             )
         ]

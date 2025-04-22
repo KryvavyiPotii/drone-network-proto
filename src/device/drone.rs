@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use crate::device::{
@@ -5,14 +6,15 @@ use crate::device::{
     Transmitter, UNKNOWN_ID, generate_device_id,
 };
 use crate::device::systems::{ReceiveMessageError, TRXSystem};
+use crate::infection::{InfectionState, InfectionType, JAMMING_SIGNAL_LEVEL};
 use crate::mathphysics::{
     Megahertz, Meter, MeterPerSecond, Point3D, Position, Vector3D, 
     equation_of_motion_3d, millis_to_secs, 
 };
 use crate::message::{Goal, Message, MessageType};
 use crate::signal::{
-    FreqToLevelMap, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, NO_SIGNAL_LEVEL, 
-    SignalArea, SignalLevel, WIFI_2_4GHZ_FREQUENCY,
+    FreqToLevelMap, SignalArea, SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, 
+    NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
 };
 
 
@@ -20,23 +22,24 @@ pub const DESTINATION_RADIUS: Meter = 5.0;
 pub const MAX_DRONE_SPEED: MeterPerSecond  = 25.0;
 
 
+#[derive(Clone)]
 pub struct DroneBuilder<'a> {
-    id: DeviceId,
     command_center: Option<&'a CommandCenter>,
     global_position_in_meters: Option<Point3D>,
     goal: Option<Goal>,
-    trx_system: Option<TRXSystem>
+    trx_system: Option<TRXSystem>,
+    vulnerabilities: Option<Vec<InfectionType>>
 }
 
 impl<'a> DroneBuilder<'a> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            id: generate_device_id(),
             command_center: None,
             global_position_in_meters: None,
             goal: None,
-            trx_system: None
+            trx_system: None,
+            vulnerabilities: None
         }
     }
 
@@ -69,6 +72,15 @@ impl<'a> DroneBuilder<'a> {
         self.trx_system = Some(trx_system);
         self
     }
+
+    #[must_use]
+    pub fn set_vulnerabilities(
+        mut self, 
+        vulnerabilities: &[InfectionType]
+    ) -> Self {
+        self.vulnerabilities = Some(vulnerabilities.to_vec());
+        self
+    }
    
     #[must_use]
     pub fn build(self) -> Drone {
@@ -78,11 +90,12 @@ impl<'a> DroneBuilder<'a> {
         };
 
         Drone::new(
-            self.id,
+            generate_device_id(),
             command_center_id,
             self.global_position_in_meters.unwrap_or_default(),
             self.goal.unwrap_or_default(),
-            self.trx_system.unwrap_or_default()
+            self.trx_system.unwrap_or_default(),
+            self.vulnerabilities.unwrap_or_default().as_ref()
         )
     }
 }
@@ -94,13 +107,6 @@ impl Default for DroneBuilder<'_> {
 }
 
 
-// Interactivity:
-//     Drone is supposed to be a black box for a user. Only network models 
-//     should be able to interact with drones. 
-//     The user is only allowed to create a Drone.
-// MessageQueue:
-//     It is possible to move message queue from network models to each drone 
-//     individually but it will lead to substantial performance loss. 
 #[derive(Clone, Debug)]
 pub struct Drone {
     id: DeviceId,
@@ -109,10 +115,9 @@ pub struct Drone {
     global_position_in_meters: Point3D,
     position_in_meters: Point3D,
     velocity: Vector3D,
-    destination_in_meters: Point3D,
     goal: Goal,
     trx_system: TRXSystem,
-    infection_state: bool
+    infection_states: HashMap<InfectionType, InfectionState>
 }
 
 impl Drone {
@@ -122,8 +127,14 @@ impl Drone {
         command_center_id: DeviceId,
         global_position_in_meters: Point3D,
         goal: Goal,
-        trx_system: TRXSystem
+        trx_system: TRXSystem,
+        vulnerabilities: &[InfectionType]
     ) -> Self {
+        let infection_states = vulnerabilities
+            .iter()
+            .map(|infection_type| (*infection_type, InfectionState::Vulnerable))
+            .collect();
+
         Self {
             id,
             command_center_id,
@@ -133,10 +144,9 @@ impl Drone {
             // To get it the drone needs GPS connection.
             position_in_meters: Point3D::default(),
             velocity: Vector3D::default(),
-            destination_in_meters: global_position_in_meters,
             goal,
             trx_system,
-            infection_state: false
+            infection_states
         }
     }
 
@@ -151,40 +161,38 @@ impl Drone {
     }
 
     #[must_use]
-    pub fn is_infected(&self) -> bool {
-        self.infection_state
+    pub fn velocity(&self) -> &Vector3D {
+        &self.velocity
     }
 
     pub fn connect_command_center(&mut self, command_center: &CommandCenter) {
         self.command_center_id = command_center.id();
     }
-   
+  
     /// # Errors
     ///
     /// Will return Err if destination device ID of message is not broadcast 
     /// nor drone's device ID or if `Drone::receive_message` returns Err.
-    pub fn process_message(
+    pub fn receive_and_process_message(
         &mut self, 
         frequency: Megahertz, 
         message: &Message
     ) -> Result<(), ReceiveMessageError> {
-        let destination_id = message.destination_id();
-
-        if destination_id != UNKNOWN_ID && self.id() != destination_id {
-            return Err(ReceiveMessageError::WrongDestination);
-        }
-
         self.receive_message(frequency, message)?;
 
         match message.message_type() {
-            MessageType::ChangeGoal(goal) => {
+            MessageType::SetGoal(goal) => {
                 self.goal = *goal;
             },
-            MessageType::Infection => {
-                self.infection_state = true;
-            },
-            MessageType::SetDestination(destination) => {
-                self.destination_in_meters = *destination;
+            MessageType::Infection(infection_type) => {
+                if let InfectionState::Vulnerable = self
+                    .infection_state(infection_type)
+                {
+                    self.infection_states.insert(
+                        *infection_type, 
+                        InfectionState::Infected
+                    );
+                }
             },
         };
 
@@ -192,28 +200,39 @@ impl Drone {
     }
 
     pub fn update_state(&mut self) {
-        self.update_position();
-    }
+        let gps_is_connected = self.receives_signal(GPS_L1_FREQUENCY) 
+            || self.receives_signal(GPS_L2_FREQUENCY);
 
-    fn update_position(&mut self) {
-        if self.receives_signal(GPS_L1_FREQUENCY) {
-            self.update_current_position();
-            self.update_movement_direction();
-        } else {
-            self.update_movement_direction_without_gps();
-        }
+        match self.goal {
+            Goal::Attack(destination) | Goal::Reposition(destination) 
+                if gps_is_connected => {
+                self.update_current_position();
+                self.update_movement_direction(destination);
+            },
+            Goal::Attack(destination) | Goal::Reposition(destination) =>
+                self.update_movement_direction_without_gps(destination),
+            Goal::Undefined if gps_is_connected =>
+                self.update_current_position(),
+            Goal::Undefined => ()
+        };
         
         self.update_global_position();
-        
-        self.connect_gps();
     }
     
-    fn update_movement_direction(&mut self) {
+    fn update_movement_direction(&mut self, destination: Point3D) {
         self.velocity = Vector3D::new(
             self.position_in_meters,
-            self.destination_in_meters
+            destination
         );
         
+        self.velocity.truncate(self.max_speed);
+    }
+    
+    fn update_movement_direction_without_gps(&mut self, destination: Point3D) {
+        self.update_movement_direction(destination);
+        
+        self.velocity.initial_point.z = 0.0;
+        self.velocity.terminal_point.z = 0.0;
         self.velocity.truncate(self.max_speed);
     }
 
@@ -227,41 +246,78 @@ impl Drone {
 
     fn update_current_position(&mut self) {
         self.position_in_meters = self.global_position_in_meters;
-       
-        // Drone can check if it has reached the destination only if it knows
-        // its current position (if it has GPS connection).
-        if self.reached_destination() && matches!(self.goal, Goal::Attack) {
-            self.try_attack();
+        self.try_reach_goal();
+    }
+
+    // Drone can check if it has reached the goal only if it knows
+    // its current position (if it has GPS connection).
+    fn try_reach_goal(&mut self) {
+        match self.goal {
+            Goal::Attack(destination) 
+                if self.distance_to(&destination) <= DESTINATION_RADIUS => 
+                self.selfdestruction(),
+            Goal::Reposition(destination) 
+                if self.distance_to(&destination) <= DESTINATION_RADIUS => 
+                self.goal = Goal::Undefined,
+            _ => (),
         }
-    }
-
-    fn update_movement_direction_without_gps(&mut self) {
-        self.update_movement_direction();
-        
-        self.velocity.initial_point.z = 0.0;
-        self.velocity.terminal_point.z = 0.0;
-        self.velocity.truncate(self.max_speed);
-    }
-
-    fn connect_gps(&mut self) {
-        self.trx_system
-            .set_rx_signal_level(GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL);
-    }
-
-    #[must_use]
-    pub fn reached_destination(&self) -> bool {
-        let distance = self.distance_to(&self.destination_in_meters);
-        
-        distance <= DESTINATION_RADIUS
-    }
-
-    fn try_attack(&mut self) {
-        self.selfdestruction();
     }
 
     fn selfdestruction(&mut self) {
         self.trx_system
             .set_rx_signal_level(WIFI_2_4GHZ_FREQUENCY, NO_SIGNAL_LEVEL);
+    }
+
+    // Handling is done on the network model level.
+    pub fn handle_infection(&mut self) {
+        let infections: Vec<InfectionType> = self.infection_states
+            .iter()
+            .filter_map(|(infection_type, infection_state)| 
+                match infection_state {
+                    InfectionState::Infected => Some(*infection_type),
+                    _ => None
+                }
+            )
+            .collect();
+
+        for infection_type in &infections {
+            match infection_type {
+                InfectionType::Indicator => (),
+                InfectionType::Jamming => self.handle_jamming()
+            }
+        }
+    }
+
+    fn handle_jamming(&mut self) {
+        let rx_frequencies: Vec<Megahertz> = self
+            .rx_signal_levels()
+            .keys()
+            .map(|frequency| *frequency)
+            .collect();
+
+        for frequency in rx_frequencies {
+            self.signal_level_suppression(frequency, JAMMING_SIGNAL_LEVEL);
+        }
+    }
+}
+
+impl Default for Drone {
+    fn default() -> Self {
+        let infection_states = HashMap::from([
+            (InfectionType::Jamming, InfectionState::Vulnerable)
+        ]);
+
+        Self {
+            id: generate_device_id(),
+            command_center_id: UNKNOWN_ID,
+            max_speed: MAX_DRONE_SPEED,
+            global_position_in_meters: Point3D::default(),
+            position_in_meters: Point3D::default(),
+            velocity: Vector3D::default(),
+            goal: Goal::Undefined,
+            trx_system: TRXSystem::default(),
+            infection_states
+        }
     }
 }
 
@@ -289,6 +345,12 @@ impl Device for Drone {
     fn id(&self) -> DeviceId {
         self.id
     }
+    
+    fn infection_states(
+        &self, 
+    ) -> &HashMap<InfectionType, InfectionState> {
+        &self.infection_states
+    }   
 }
 
 impl Transmitter for Drone {
@@ -381,6 +443,12 @@ impl Receiver for Drone {
         frequency: Megahertz,
         message: &Message
     ) -> Result<(), ReceiveMessageError> {
+        let destination_id = message.destination_id();
+
+        if destination_id != UNKNOWN_ID && self.id() != destination_id {
+            return Err(ReceiveMessageError::WrongDestination);
+        }
+
         self.trx_system.receive_message(frequency, message) 
     }
     
@@ -404,6 +472,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::device::systems::TRXModule;
+    use crate::signal::GREEN_SIGNAL_LEVEL;
 
     use super::*;
 
@@ -426,6 +495,42 @@ mod tests {
         TRXSystem::Color(drone_green_rx_module(frequency))
     }
 
+    fn reached_destination(drone: &Drone, destination: &Point3D) -> bool {
+        drone.distance_to(destination) <= DESTINATION_RADIUS
+    }
+
+    
+    #[test]
+    fn no_movement_without_destination_set() {
+        let drone_position = Point3D::new(5.0, 0.0, 0.0);
+
+        let mut drone = DroneBuilder::new()
+            .set_global_position(drone_position)
+            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .build();
+
+        assert_eq!(
+            *drone.position_without_gps(), 
+            Point3D::default()
+        );
+        assert_eq!(
+            *drone.position(), 
+            drone_position
+        );
+
+        for _ in (0..1000).step_by(STEP_DURATION as usize) {
+            drone.update_state();
+
+            assert_eq!(
+                *drone.position_without_gps(), 
+                drone_position
+            );
+            assert_eq!(
+                *drone.position(), 
+                drone_position
+            );
+        }
+    }
 
     #[test]
     fn drone_movement_without_gps() {
@@ -439,9 +544,9 @@ mod tests {
             UNKNOWN_ID, 
             drone_without_gps.id(), 
             0, 
-            MessageType::SetDestination(destination_point)
+            MessageType::SetGoal(Goal::Reposition(destination_point))
         );
-        let _ = drone_without_gps.process_message(
+        let _ = drone_without_gps.receive_and_process_message(
             WIFI_2_4GHZ_FREQUENCY, 
             &set_destination_message
         );
@@ -472,9 +577,9 @@ mod tests {
             UNKNOWN_ID, 
             drone.id(), 
             0, 
-            MessageType::SetDestination(destination_point)
+            MessageType::SetGoal(Goal::Reposition(destination_point))
         );
-        let _ = drone.process_message(
+        let _ = drone.receive_and_process_message(
             WIFI_2_4GHZ_FREQUENCY, 
             &set_destination_message
         ); 
@@ -483,12 +588,13 @@ mod tests {
             drone.update_state();
         }
 
-        assert!(drone.reached_destination());
+        assert!(reached_destination(&drone, &destination_point));
     }
 
     #[test]
     fn process_correct_message() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let goal = Goal::Attack(Point3D::new(5.0, 0.0, 0.0));
 
         let mut drone = DroneBuilder::new()
             .set_trx_system(drone_green_rx_system(frequency))
@@ -498,35 +604,36 @@ mod tests {
             drone.id(),
             drone.id(),
             0, 
-            MessageType::ChangeGoal(Goal::Attack)
+            MessageType::SetGoal(goal)
         );
 
-        let _ = drone.process_message(frequency, &message);
+        let _ = drone.receive_and_process_message(frequency, &message);
 
-        assert!(matches!(drone.goal, Goal::Attack));
+        assert_eq!(goal, drone.goal);
     }
 
     #[test]
     fn process_broadcast_message() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let goal = Goal::Attack(Point3D::new(5.0, 0.0, 0.0));
+        let mut drone = DroneBuilder::new()
+            .set_trx_system(drone_green_rx_system(frequency))
+            .build();
+        
         let message = Message::new(
             UNKNOWN_ID,
             UNKNOWN_ID,
             0, 
-            MessageType::ChangeGoal(Goal::Attack)
+            MessageType::SetGoal(goal)
         );
 
-        let mut drone = DroneBuilder::new()
-            .set_trx_system(drone_green_rx_system(frequency))
-            .build();
+        let _ = drone.receive_and_process_message(frequency, &message);
 
-        let _ = drone.process_message(frequency, &message);
-
-        assert!(matches!(drone.goal, Goal::Attack));
+        assert_eq!(goal, drone.goal);
     }
 
     #[test]
-    fn process_message_with_wrong_destination() {
+    fn receive_and_process_message_with_wrong_destination() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
 
         let mut drone = DroneBuilder::new()
@@ -537,35 +644,83 @@ mod tests {
             drone.id() + 1,
             drone.id() + 1,
             0, 
-            MessageType::ChangeGoal(Goal::Attack)
+            MessageType::SetGoal(Goal::Undefined)
         );
 
         assert!(
             matches!(
-                drone.process_message(frequency, &message),
+                drone.receive_and_process_message(frequency, &message),
                 Err(ReceiveMessageError::WrongDestination)
             )
         );
     }
 
     #[test]
-    fn get_infected() {
+    fn invulnerable_drone_infection() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let infection_type = InfectionType::Jamming;
+        let mut drone = DroneBuilder::new()
+            .set_trx_system(drone_green_rx_system(frequency))
+            .build();
+        
         let message = Message::new(
             UNKNOWN_ID,
             UNKNOWN_ID,
             0, 
-            MessageType::Infection
+            MessageType::Infection(infection_type)
         );
 
-        let mut drone = DroneBuilder::new()
-            .set_trx_system(drone_green_rx_system(frequency))
-            .build();
+        assert!(!drone.is_infected());
+        assert!(
+            matches!(
+                drone.infection_state(&infection_type),
+                InfectionState::Patched
+            )
+        );
+
+        let _ = drone.receive_and_process_message(frequency, &message);
 
         assert!(!drone.is_infected());
+        assert!(
+            matches!(
+                drone.infection_state(&infection_type),
+                InfectionState::Patched
+            )
+        );
+    }
 
-        let _ = drone.process_message(frequency, &message);
+    #[test]
+    fn vulnerable_drone_infection() {
+        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let infection_type = InfectionType::Jamming;
+        let mut drone = DroneBuilder::new()
+            .set_trx_system(drone_green_rx_system(frequency))
+            .set_vulnerabilities(&[infection_type])
+            .build();
+        
+        let message = Message::new(
+            UNKNOWN_ID,
+            UNKNOWN_ID,
+            0, 
+            MessageType::Infection(infection_type)
+        );
+
+        assert!(!drone.is_infected());
+        assert!(
+            matches!(
+                drone.infection_state(&infection_type),
+                InfectionState::Vulnerable
+            )
+        );
+
+        let _ = drone.receive_and_process_message(frequency, &message);
 
         assert!(drone.is_infected());
+        assert!(
+            matches!(
+                drone.infection_state(&infection_type),
+                InfectionState::Infected
+            )
+        );
     }
 }

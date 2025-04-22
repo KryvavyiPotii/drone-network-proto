@@ -9,7 +9,8 @@ use impl_ops::{
 };
 use thiserror::Error;
 
-use crate::device::{DeviceId, ConnectionGraph}; 
+use crate::device::DeviceId; 
+use crate::infection::InfectionType;
 use crate::mathphysics::{Millisecond, Point3D};
 
 use super::signal::GREEN_SIGNAL_STRENGTH_VALUE;
@@ -24,11 +25,8 @@ pub mod queue;
 pub type DelaySnapshot = HashMap<DeviceId, u32>;
 
 
-pub const CHANGE_GOAL_COST: MessageCost     = MessageCost(
+pub const SET_GOAL_COST: MessageCost     = MessageCost(
     GREEN_SIGNAL_STRENGTH_VALUE / 100.0 
-);
-pub const SET_DESTINATION_COST: MessageCost = MessageCost(
-    GREEN_SIGNAL_STRENGTH_VALUE / 50.0 
 );
 pub const INFECTION_COST: MessageCost       = MessageCost(
     GREEN_SIGNAL_STRENGTH_VALUE / 50.0
@@ -37,9 +35,9 @@ pub const INFECTION_COST: MessageCost       = MessageCost(
 
 fn define_message_execution_cost(message_type: &MessageType) -> MessageCost {
     match message_type {
-        MessageType::ChangeGoal(_) => CHANGE_GOAL_COST,
-        MessageType::Infection => INFECTION_COST,
-        MessageType::SetDestination(..) =>  SET_DESTINATION_COST,
+        MessageType::SetGoal(_) => SET_GOAL_COST,
+        // TODO add cost dependency on infection type
+        MessageType::Infection(_) => INFECTION_COST,
     }
 }
 
@@ -90,19 +88,19 @@ impl_op_ex!(
 );
 
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Goal {
     #[default]
-    Reposition,
-    Attack,
+    Undefined,
+    Reposition(Point3D),
+    Attack(Point3D),
 }
 
 
 #[derive(Clone, Copy, Debug)]
 pub enum MessageType {
-    ChangeGoal(Goal),
-    Infection,
-    SetDestination(Point3D),
+    SetGoal(Goal),
+    Infection(InfectionType),
 }
 
 
@@ -120,8 +118,6 @@ pub enum MessagePreprocessError {
     AlreadyPreprocessed,
     #[error("Message execution time is set to be later")]
     TooEarly,
-    #[error("Message source device ID is unknown")]
-    UnknownSource
 }
 
 
@@ -215,16 +211,12 @@ impl Message {
     pub fn try_preprocess(
         &mut self,
         current_time: Millisecond,
-        connections: &ConnectionGraph,
     ) -> Result<(), MessagePreprocessError> {
         if self.is_in_progress() {
             return Err(MessagePreprocessError::AlreadyPreprocessed);
         }
         if current_time < self.time() {
             return Err(MessagePreprocessError::TooEarly);
-        }
-        if !connections.contains_device(self.source_id()) {
-            return Err(MessagePreprocessError::UnknownSource);
         }
 
         self.process();
@@ -235,60 +227,9 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use crate::device::{
-        CommandCenter, CommandCenterBuilder, Device, DeviceId, Drone,
-        DroneBuilder, UNKNOWN_ID
-    };
-    use crate::device::{IdToDroneMap, Topology};
-    use crate::device::systems::{TRXModule, TRXSystem};
-    use crate::mathphysics::Megahertz;
-    use crate::signal::GREEN_SIGNAL_LEVEL;
+    use crate::device::UNKNOWN_ID;
 
     use super::*;
-
-
-    const SOME_FREQUENCY: Megahertz = 2_000;
-
-
-    fn simple_trx_system() -> TRXSystem {
-        TRXSystem::Color(
-            TRXModule::build(
-                HashMap::from([(SOME_FREQUENCY, GREEN_SIGNAL_LEVEL)]),
-                HashMap::from([(SOME_FREQUENCY, GREEN_SIGNAL_LEVEL)]),
-            ).unwrap()
-        )
-    }
-
-    fn simple_cc() -> CommandCenter {
-        CommandCenterBuilder::new()
-            .set_trx_system(simple_trx_system())
-            .build()
-    }
-    
-    fn simple_drone() -> Drone {
-        DroneBuilder::new()
-            .set_trx_system(simple_trx_system())
-            .build()
-    }
-
-    fn connection_graph_with_cc_id() -> (ConnectionGraph, DeviceId) {
-        let command_center = simple_cc();
-        let cc_id = command_center.id();
-
-        let drone_map = IdToDroneMap::from([simple_drone()]);
-
-        let mut connections = ConnectionGraph::new();
-        connections.update(
-            &command_center, 
-            &drone_map, 
-            Topology::Star, 
-            SOME_FREQUENCY
-        );
-
-        (connections, cc_id)
-    }
 
 
     #[test]
@@ -298,13 +239,13 @@ mod tests {
             UNKNOWN_ID,
             UNKNOWN_ID,
             current_time, 
-            MessageType::ChangeGoal(Goal::Reposition)
+            MessageType::SetGoal(Goal::Undefined)
         );
         message.process();
 
         assert!(
             matches!(
-                message.try_preprocess(current_time, &ConnectionGraph::new()), 
+                message.try_preprocess(current_time), 
                 Err(MessagePreprocessError::AlreadyPreprocessed)
             )
         );
@@ -317,51 +258,29 @@ mod tests {
             UNKNOWN_ID,
             UNKNOWN_ID,
             50, 
-            MessageType::ChangeGoal(Goal::Reposition)
+            MessageType::SetGoal(Goal::Undefined)
         );
 
         assert!(
             matches!(
-                message.try_preprocess(current_time, &ConnectionGraph::new()), 
+                message.try_preprocess(current_time), 
                 Err(MessagePreprocessError::TooEarly)
             )
         );
     }
     
     #[test]
-    fn message_preprocessing_with_unknown_source() {
-        let current_time = 12;
-        let mut message = Message::new(
-            UNKNOWN_ID,
-            UNKNOWN_ID,
-            current_time, 
-            MessageType::ChangeGoal(Goal::Reposition)
-        );
-
-        let (connections, _) = connection_graph_with_cc_id();
-
-        assert!(
-            matches!(
-                message.try_preprocess(current_time, &connections), 
-                Err(MessagePreprocessError::UnknownSource)
-            )
-        );
-    }
-    
-    #[test]
     fn correct_message_preprocessing() {
-        let (connections, cc_id) = connection_graph_with_cc_id();
-        
         let current_time = 12;
         let mut message = Message::new(
-            cc_id,
+            UNKNOWN_ID,
             UNKNOWN_ID,
             current_time, 
-            MessageType::ChangeGoal(Goal::Reposition)
+            MessageType::SetGoal(Goal::Undefined)
         );
 
         assert!(
-            message.try_preprocess(current_time, &connections)
+            message.try_preprocess(current_time)
                 .is_ok()
         );
     }

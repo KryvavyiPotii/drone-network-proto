@@ -3,21 +3,21 @@ use std::collections::hash_map::Values;
 use crate::device::{
     CommandCenter, ConnectionGraph, DelaySnapshot, Device, DeviceId, Drone, 
     ElectronicWarfare, FindSignalLevel, IdToDroneMap, IdToLevelMap, Topology, 
-    Suppressor, Transceiver, Transmitter, STEP_DURATION, UNKNOWN_ID,
+    Suppressor, Transceiver, Transmitter, STEP_DURATION, UNKNOWN_ID
 };
 use crate::device::networkmodel::{
     enqueue_infection_messages, spread_infection_messages
 };
 use crate::mathphysics::{Megahertz, Millisecond, Point3D};
 use crate::message::{
-    Message, MessagePreprocessError, MessageQueue, MessageType
+    Goal, Message, MessagePreprocessError, MessageQueue, MessageType
 };
-use crate::signal::{GPS_L1_FREQUENCY, NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY};
+use crate::signal::{
+    GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, NO_SIGNAL_LEVEL, 
+    WIFI_2_4GHZ_FREQUENCY
+};
 
 
-// Making this function a method of ComplexNetwork and calling it from 
-// ComplexNetwork::process_message_queue() is impossible due to having mutable
-// and immutable references to self simultaneously.
 fn send_message(
     drone_map: &mut IdToDroneMap,
     frequency: Megahertz,
@@ -39,9 +39,9 @@ fn send_message(
         let Some(drone) = drone_map.get_mut(&destination_id) else {
             return;
         };
-        let Some(delay) = delays_snapshot.get(&drone.id()) else {
-            return;
-        };
+        let delay = delays_snapshot
+            .get(&drone.id())
+            .unwrap_or(&0);
 
         unicast_message(drone, frequency, *delay, message, current_time);
     }
@@ -55,7 +55,7 @@ fn unicast_message(
     current_time: Millisecond
 ) {
     if current_time >= message.time() + delay {
-        let _ = drone.process_message(frequency, message);
+        let _ = drone.receive_and_process_message(frequency, message);
     }
 }
 
@@ -67,9 +67,9 @@ fn broadcast_message(
     current_time: Millisecond
 ) {
     for drone in drone_map.drones_mut() {
-        let Some(delay) = delays_snapshot.get(&drone.id()) else {
-            continue;
-        };
+        let delay = delays_snapshot
+            .get(&drone.id())
+            .unwrap_or(&0);
 
         unicast_message(drone, frequency, *delay, message, current_time);
     }
@@ -82,13 +82,17 @@ fn try_finish_message(
     delays_snapshot: &DelaySnapshot,
     message: &mut Message
 ) {
+    if let MessageType::Infection(_) = message.message_type() {
+        message.finish();
+        return;
+    }
+
     if let Some(longest_delay) = delays_snapshot.values().max() {
         if current_time >= message.time() + longest_delay {
             message.finish(); 
         }
     }
 }
-
 
 #[derive(Clone)]
 pub struct ComplexNetwork {
@@ -134,10 +138,20 @@ impl ComplexNetwork {
     pub fn update(&mut self) {
         self.update_connections_graph();
         self.update_signal_levels();
+        
         self.suppress_network();
         self.drone_map.remove_uncontrolled_drones(WIFI_2_4GHZ_FREQUENCY);
+        
         self.process_message_queue();
+        
+        self.drone_map.handle_infection();
+        self.drone_map.remove_uncontrolled_drones(WIFI_2_4GHZ_FREQUENCY);
+        
         self.drone_map.update_states();
+        self.drone_map.set_rx_signal_level(
+            GPS_L1_FREQUENCY, 
+            &GREEN_SIGNAL_LEVEL
+        );
      
         self.current_time += STEP_DURATION;
     }
@@ -218,38 +232,43 @@ impl ComplexNetwork {
         }
 
         // Preprocess delays to avoid unnecessary function calls in the loop.
-        let delays = self.connections.delays(
-            &self.command_center, 
+        let delays_from_cc = self.connections.delays(
+            self.command_center.id(), 
             self.delay_multiplier
         );
 
         let mut infection_messages = Vec::new();
 
         for (frequency, message, delays_snapshot) in &mut self.message_queue {
-            match message.try_preprocess(
-                self.current_time, 
-                &self.connections
-            ) {
-                Err(
-                    MessagePreprocessError::TooEarly
-                    | MessagePreprocessError::UnknownSource
-                ) => continue, 
+            match message.try_preprocess(self.current_time) {
+                Err(MessagePreprocessError::TooEarly) => continue, 
                 Err(MessagePreprocessError::AlreadyPreprocessed) => (),
                 Ok(()) => {
-                    delays_snapshot.clone_from(&delays);
-
                     match message.message_type() {
-                        MessageType::ChangeGoal(_) => 
-                            (),
-                        MessageType::Infection => 
+                        MessageType::SetGoal(
+                            Goal::Attack(destination)
+                            | Goal::Reposition(destination)
+                        ) => {
+                            self.destination_in_meters = *destination;
+                            delays_snapshot.clone_from(&delays_from_cc);
+                        },
+                        MessageType::SetGoal(_) => 
+                            delays_snapshot.clone_from(&delays_from_cc),
+                        MessageType::Infection(_) => { 
+                            delays_snapshot.clone_from(
+                                &self.connections.delays(
+                                    message.destination_id(), 
+                                    self.delay_multiplier
+                                )
+                            );
+
                             spread_infection_messages(
                                 *frequency,
                                 message,
                                 &self.connections,
                                 &mut infection_messages
-                            ),
-                        MessageType::SetDestination(destination) =>
-                            self.destination_in_meters = *destination,
+                            )
+                        },
                     }
                 }
             }
@@ -322,18 +341,18 @@ impl FindSignalLevel for ComplexNetwork {
 mod tests {
     use std::collections::HashMap;
 
+    use crate::device::{CommandCenterBuilder, Device, DroneBuilder};
+    use crate::device::systems::{TRXModule, TRXSystem};
+    use crate::infection::{InfectionType, INFECTION_DELAY};
+    use crate::mathphysics::Meter;
     use crate::signal::{
         GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, RED_SIGNAL_LEVEL, 
         SignalArea, SignalLevel, YELLOW_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
     };
-    use crate::device::{CommandCenterBuilder, DroneBuilder};
-    use crate::device::systems::{TRXModule, TRXSystem};
-    use crate::mathphysics::Meter;
     
     use super::*;
 
-    // These constants were introduced for testing independently from the global
-    // constants.
+
     const CC_TX_CONTROL_RADIUS: Meter    = 300.0;
     const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
     const VERY_BIG_STRENGTH_VALUE: f32   = GREEN_SIGNAL_STRENGTH_VALUE * 1000.0;
@@ -428,6 +447,12 @@ mod tests {
                 }
             )
             .build()
+    }
+
+    fn wait_for_infection(network: &mut ComplexNetwork) {
+        for _ in (0..=INFECTION_DELAY).step_by(STEP_DURATION as usize) {
+            network.update();
+        }
     }
 
 
@@ -625,5 +650,300 @@ mod tests {
                 &signal_levels
             )
         );
+    }
+
+    #[test]
+    fn spread_infection_in_star() {
+        // Network topology:
+        //
+        // B -(1.1)- A -(1.1)- C
+        let command_center = CommandCenterBuilder::new()
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: drone_tx_module(),
+                    rx_module: TRXModule::default() 
+                }
+            )
+            .build();
+        
+        let vulnerable_drone_builder = DroneBuilder::new()
+            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: drone_tx_module(),
+                    rx_module: drone_rx_module() 
+                }
+            );
+        let infected_drone = vulnerable_drone_builder
+            .clone()
+            .set_global_position(Point3D::new(1.1, 0.0, 0.0))
+            .build();
+        let infected_drone_id = infected_drone.id();
+        let vulnerable_drone = vulnerable_drone_builder
+            .set_global_position(Point3D::new(-1.1, 0.0, 0.0))
+            .build();
+        let vulnerable_drone_id = vulnerable_drone.id();
+
+        let drones = [infected_drone, vulnerable_drone];
+        let scenario = vec!((
+            WIFI_2_4GHZ_FREQUENCY,
+            Message::new(
+                command_center.id(),
+                infected_drone_id,
+                0, 
+                MessageType::Infection(InfectionType::Indicator)
+            ),
+        ));
+        
+        let mut network = ComplexNetwork::new(
+            command_center, 
+            IdToDroneMap::from(drones), 
+            Vec::new(), 
+            &scenario, 
+            Topology::Star, 
+            0.0
+        );
+
+        assert!(
+            !network.drone_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!network.command_center.is_infected());
+
+        network.update();
+        
+        assert!(
+            network.drone_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!network.command_center.is_infected());
+
+        wait_for_infection(&mut network);
+
+        assert!(
+            network.drone_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        // At version 0.6.0 must panic.
+        // Command center infection should be implemented in next versions.
+        assert!(network.command_center.is_infected());
+
+        wait_for_infection(&mut network);
+
+        assert!(
+            network.drone_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            network.drone_map
+                .get(&vulnerable_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(network.command_center.is_infected());
+    }
+
+    #[test]
+    fn spread_infection_in_mesh() {
+        let command_center = CommandCenterBuilder::new()
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: drone_tx_module(),
+                    rx_module: TRXModule::default() 
+                }
+            )
+            .build();
+        
+        let vulnerable_drone_builder = DroneBuilder::new()
+            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_trx_system(
+                TRXSystem::Strength { 
+                    tx_module: drone_tx_module(),
+                    rx_module: drone_rx_module() 
+                }
+            );
+        let infected_drone = vulnerable_drone_builder
+            .clone()
+            .set_global_position(Point3D::new(10.0, 0.0, 0.0))
+            .build();
+        let infected_drone_id = infected_drone.id();
+        let vulnerable_drone1 = vulnerable_drone_builder
+            .clone()
+            .set_global_position(Point3D::new(1.1, 0.0, 0.0))
+            .build();
+        let vulnerable_drone_id1 = vulnerable_drone1.id();
+        let vulnerable_drone2 = vulnerable_drone_builder
+            .clone()
+            .set_global_position(Point3D::new(2.0, 0.0, 0.0))
+            .build();
+        let vulnerable_drone_id2 = vulnerable_drone2.id();
+        let vulnerable_drone3 = vulnerable_drone_builder
+            .clone()
+            .set_global_position(Point3D::new(3.0, 0.0, 0.0))
+            .build();
+        let vulnerable_drone_id3 = vulnerable_drone3.id();
+        
+        let drones = [
+            infected_drone, 
+            vulnerable_drone1,
+            vulnerable_drone2,
+            vulnerable_drone3,
+        ];
+        let scenario = vec!((
+            WIFI_2_4GHZ_FREQUENCY,
+            Message::new(
+                command_center.id(),
+                infected_drone_id,
+                0, 
+                MessageType::Infection(InfectionType::Indicator)
+            ),
+        ));
+        
+        let mut network = ComplexNetwork::new(
+            command_center, 
+            IdToDroneMap::from(drones), 
+            Vec::new(), 
+            &scenario, 
+            Topology::Mesh, 
+            0.0
+        );
+
+        assert!(
+            !network.drone_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id1)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id2)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id3)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!network.command_center.is_infected());
+
+        network.update();       
+        
+        assert!(
+            network.drone_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id1)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id2)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !network.drone_map
+                .get(&vulnerable_drone_id3)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!network.command_center.is_infected());
+
+        wait_for_infection(&mut network);
+
+        assert!(
+            network.drone_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            network.drone_map
+                .get(&vulnerable_drone_id1)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            network.drone_map
+                .get(&vulnerable_drone_id2)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            network.drone_map
+                .get(&vulnerable_drone_id3)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!network.command_center.is_infected());
+
+        wait_for_infection(&mut network);
+        
+        assert!(
+            network.drone_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            network.drone_map
+                .get(&vulnerable_drone_id1)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            network.drone_map
+                .get(&vulnerable_drone_id2)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            network.drone_map
+                .get(&vulnerable_drone_id3)
+                .unwrap()
+                .is_infected()
+        );
+        // At version 0.6.0 must panic.
+        // Command center infection should be implemented in next versions.
+        assert!(network.command_center.is_infected());
     }
 }

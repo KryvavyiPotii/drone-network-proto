@@ -1,11 +1,12 @@
 use std::collections::hash_map::Values;
 
 use crate::device::{
-    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, IdToDroneMap
+    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, IdToDroneMap,
 };
 use crate::device::connections::Topology;
+use crate::infection::INFECTION_DELAY;
 use crate::mathphysics::{Megahertz, Point3D};
-use crate::message::{Message, MessageQueue, MessageType};
+use crate::message::{Message, MessageQueue};
 
 
 pub use cellularautomaton::CellularAutomaton;
@@ -26,14 +27,14 @@ fn spread_infection_messages(
 ) {
     let destination_id = initial_message.destination_id();
 
-    let neighbors = connections.neighbors(destination_id);
-
-    for node in neighbors {
+    for neighbor in connections.neighbors(destination_id) {
         let infection_message = Message::new(
             destination_id,
-            node,
-            initial_message.time(),
-            MessageType::Infection
+            neighbor,
+            // TODO make infection speed depend on its type
+            initial_message.time() + INFECTION_DELAY,
+            // TODO make infection spreading depend on its type
+            *initial_message.message_type()
         );
         
         infection_messages.push((frequency, infection_message));
@@ -54,6 +55,7 @@ fn enqueue_infection_messages(
             continue;
         };
 
+        // TODO reinfection handling that depends on the infection type
         if drone.is_infected() || infected_drones.contains(&drone.id()) {
             continue;
         }
@@ -295,7 +297,9 @@ mod tests {
         CommandCenterBuilder, ConnectionGraph, DroneBuilder, IdToDroneMap
     };
     use crate::device::systems::{TRXModule, TRXSystem};
+    use crate::infection::InfectionType;
     use crate::mathphysics::Meter;
+    use crate::message::MessageType;
     use crate::signal::{
         GREEN_SIGNAL_STRENGTH_VALUE, NO_SIGNAL_LEVEL, SignalArea, SignalLevel, 
         WIFI_2_4GHZ_FREQUENCY
@@ -304,8 +308,6 @@ mod tests {
     use super::*;
 
     
-    // These constants were introduced for testing independently from the global
-    // constants.
     const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
     const VERY_BIG_STRENGTH_VALUE: f32   = GREEN_SIGNAL_STRENGTH_VALUE * 1000.0;
 
@@ -365,7 +367,7 @@ mod tests {
             messages
                 .iter()
                 .all(|(_, message)| 
-                    matches!(message.message_type(), MessageType::Infection)
+                    matches!(message.message_type(), MessageType::Infection(_))
                 )
         );
     }
@@ -385,7 +387,7 @@ mod tests {
 
 
     #[test]
-    fn spreading_infection() {
+    fn spreading_infection_messages() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
 
         let command_center = CommandCenterBuilder::new()
@@ -433,7 +435,7 @@ mod tests {
             command_center.id(),
             drone1_id,
             0, 
-            MessageType::Infection
+            MessageType::Infection(InfectionType::Jamming)
         );
         let mut infection_messages = Vec::new();
 
@@ -468,7 +470,7 @@ mod tests {
             command_center.id(),
             drone2_id,
             0, 
-            MessageType::Infection
+            MessageType::Infection(InfectionType::Jamming)
         );
 
         spread_infection_messages(
@@ -477,8 +479,6 @@ mod tests {
             &connections, 
             &mut infection_messages
         );
-
-        dbg!(&infection_messages);
 
         assert_eq!(3, infection_messages.len());
         assert_all_messages_are_infections(&infection_messages);

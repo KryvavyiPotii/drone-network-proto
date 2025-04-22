@@ -7,12 +7,6 @@ use crate::signal::{
 };
 
 
-pub const CC_TX_CONTROL_AREA: SignalArea    = SignalArea { radius: 300.0 };
-pub const EWD_TX_CONTROL_AREA: SignalArea   = SignalArea { radius: 50.0 };
-pub const EWD_TX_GPS_AREA: SignalArea       = SignalArea { radius: 100.0 };
-pub const DRONE_TX_CONTROL_AREA: SignalArea = SignalArea { radius: 50.0 };
-
-
 #[derive(Debug, Error)]
 pub enum SignalAreaError {
     #[error("Negative radius is forbidden")]

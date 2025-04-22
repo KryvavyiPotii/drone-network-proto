@@ -9,6 +9,7 @@ use device::networkmodel::NetworkModelType;
 
 pub mod device;
 pub mod examples;
+pub mod infection;
 pub mod mathphysics;
 pub mod message;
 pub mod signal;
@@ -33,7 +34,7 @@ fn configure_logging() {
 
 fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.5.0")
+        .version("0.6.0")
         .about("Models drone networks")
         .arg(
             Arg::new("example")
@@ -81,7 +82,7 @@ fn cli() {
                 &Config::new(
                     "Complex network (Star, infection)",
                     false,
-                    NetworkModelType::ComplexNetwork(5.0),
+                    NetworkModelType::ComplexNetwork(0.0),
                     Topology::Star
                 )
             ),

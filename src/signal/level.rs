@@ -132,8 +132,8 @@ impl SignalLevel {
             rx_signal_level    
         } else if self.is_red() && rx_signal_level.is_green() {
             YELLOW_SIGNAL_LEVEL
-        } else if self.is_yellow() && rx_signal_level.is_green() 
-            || self.is_red() && rx_signal_level.is_yellow() 
+        } else if (self.is_yellow() && rx_signal_level.is_green()) 
+            || (self.is_red() && rx_signal_level.is_yellow())
         {
             RED_SIGNAL_LEVEL
         } else {
