@@ -1,39 +1,48 @@
 use std::collections::hash_map::Values;
 
-use crate::device::{
-    CommandCenter, Device, DeviceId, Drone, ElectronicWarfare, IdToDroneMap,
-};
+use thiserror::Error;
+
+use crate::device::{Device, DeviceId, IdToDeviceMap};
 use crate::device::connections::Topology;
 use crate::infection::INFECTION_DELAY;
 use crate::mathphysics::{Megahertz, Point3D};
 use crate::message::{Message, MessageQueue};
+use crate::signal::{GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL};
 
 
 pub use cellularautomaton::CellularAutomaton;
 pub use complexnetwork::ComplexNetwork;
 
-use super::ConnectionGraph;
+use super::{ConnectionGraph, IdToGoalMap};
 
 
 pub mod cellularautomaton;
 pub mod complexnetwork;
 
 
-fn spread_infection_messages(
-    frequency: Megahertz,
+#[derive(Error, Debug)]
+pub enum UnicastMessageError {
+    #[error("Message was not received")]
+    NotReceived,
+    #[error("Message should be sent later")]
+    TooEarly,
+}
+
+
+fn multiply_infection_messages(
     initial_message: &Message,
+    frequency: Megahertz,
+    infected_device: DeviceId,
     connections: &ConnectionGraph,
     infection_messages: &mut Vec<(Megahertz, Message)>
 ) {
-    let destination_id = initial_message.destination_id();
-
-    for neighbor in connections.neighbors(destination_id) {
+    for neighbor in connections.neighbors(infected_device) {
         let infection_message = Message::new(
-            destination_id,
+            infected_device,
             neighbor,
             // TODO make infection speed depend on its type
             initial_message.time() + INFECTION_DELAY,
-            // TODO make infection spreading depend on its type
+            // TODO make infection multiplying depend on its type
             *initial_message.message_type()
         );
         
@@ -42,9 +51,9 @@ fn spread_infection_messages(
 }
 
 fn enqueue_infection_messages(
+    infection_messages: &Vec<(Megahertz, Message)>,
     message_queue: &mut MessageQueue,
-    drone_map: &IdToDroneMap,
-    infection_messages: &Vec<(Megahertz, Message)>
+    drone_map: &IdToDeviceMap,
 ) {
     let mut infected_drones = Vec::new();
 
@@ -66,14 +75,11 @@ fn enqueue_infection_messages(
     }
 }
 
-#[must_use]
-pub fn get_drone_networks_destinations(
-    drone_networks: &[NetworkModel]
-) -> Vec<&Point3D> {
-    drone_networks
-        .iter()
-        .map(NetworkModel::destination)
-        .collect()
+fn connect_gps_to_all_devices(device_map: &mut IdToDeviceMap) {
+    device_map.set_rx_signal_level(
+        &GREEN_SIGNAL_LEVEL,
+        GPS_L1_FREQUENCY, 
+    );
 }
 
 
@@ -128,47 +134,47 @@ impl NetworkModel {
     }
 
     #[must_use]
-    pub fn destination(&self) -> &Point3D {
+    pub fn goals(&self) -> IdToGoalMap {
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
-                cellular_automaton.destination(),
+                cellular_automaton.goals(),
             Self::ComplexNetwork(complex_network) =>
-                complex_network.destination()
+                complex_network.goals()
         }
     }
 
     #[must_use]
-    pub fn command_center(&self) -> &CommandCenter {
+    pub fn command_device(&self) -> &Device {
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
-                cellular_automaton.command_center(),
+                cellular_automaton.command_device(),
             Self::ComplexNetwork(complex_network) =>
-                complex_network.command_center()
+                complex_network.command_device()
         }
     }
 
     #[must_use]
-    pub fn drone_iter(&self) -> Values<'_, DeviceId, Drone> { 
+    pub fn device_iter(&self) -> Values<'_, DeviceId, Device> { 
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
-                cellular_automaton.drone_iter(),
+                cellular_automaton.device_iter(),
             Self::ComplexNetwork(complex_network) =>
-                complex_network.drone_iter()
+                complex_network.device_iter()
         }
     }
 
     #[must_use]
-    pub fn drone_count(&self) -> usize {
+    pub fn device_count(&self) -> usize {
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
-                cellular_automaton.drone_count(),
+                cellular_automaton.device_count(),
             Self::ComplexNetwork(complex_network) =>
-                complex_network.drone_count()
+                complex_network.device_count()
         }
     }
     
     #[must_use]
-    pub fn ewds(&self) -> &[ElectronicWarfare] { 
+    pub fn ewds(&self) -> &[Device] { 
         match self {
             Self::CellularAutomaton(cellular_automaton) => 
                 cellular_automaton.ewds(),
@@ -189,9 +195,9 @@ pub enum NetworkModelType {
 #[derive(Clone)]
 pub struct NetworkModelBuilder {
     network_model_type: NetworkModelType,
-    command_center: Option<CommandCenter>,
-    drones: Option<Vec<Drone>>,
-    electronic_warfare_devices: Option<Vec<ElectronicWarfare>>,
+    command_center_id: Option<DeviceId>,
+    devices: Option<Vec<Device>>,
+    electronic_warfare_devices: Option<Vec<Device>>,
     destination_in_meters: Option<Point3D>,
     topology: Option<Topology>,
     scenario: Option<Vec<(Megahertz, Message)>>
@@ -202,8 +208,8 @@ impl NetworkModelBuilder {
     pub fn new(network_model_type: NetworkModelType) -> Self {
         Self {
             network_model_type,
-            command_center: None,
-            drones: None,
+            command_center_id: None,
+            devices: None,
             electronic_warfare_devices: None,
             destination_in_meters: None,
             topology: None,
@@ -212,21 +218,24 @@ impl NetworkModelBuilder {
     }
 
     #[must_use]
-    pub fn set_command_center(mut self, command_center: CommandCenter) -> Self {
-        self.command_center = Some(command_center);
+    pub fn set_command_center_id(
+        mut self, 
+        command_center_id: DeviceId
+    ) -> Self {
+        self.command_center_id = Some(command_center_id);
         self
     }
 
     #[must_use]
-    pub fn set_drones(mut self, drones: &[Drone]) -> Self {
-        self.drones = Some(drones.to_vec());
+    pub fn set_devices(mut self, devices: &[Device]) -> Self {
+        self.devices = Some(devices.to_vec());
         self
     }
 
     #[must_use]
     pub fn set_electronic_warfare_devices(
         mut self, 
-        electronic_warfare_devices: &[ElectronicWarfare]
+        electronic_warfare_devices: &[Device]
     ) -> Self {
         self.electronic_warfare_devices = Some(
             electronic_warfare_devices.to_vec()
@@ -254,8 +263,8 @@ impl NetworkModelBuilder {
 
     #[must_use]
     pub fn build(self) -> NetworkModel {
-        let drones = IdToDroneMap::from(
-            self.drones
+        let device_map = IdToDeviceMap::from(
+            self.devices
                 .unwrap_or_default()
                 .as_slice()
         );
@@ -263,8 +272,8 @@ impl NetworkModelBuilder {
         match self.network_model_type {
             NetworkModelType::CellularAutomaton => {
                 let cellular_automaton = CellularAutomaton::new(
-                    self.command_center.unwrap_or_default(),
-                    drones,
+                    self.command_center_id.unwrap_or_default(),
+                    device_map,
                     self.electronic_warfare_devices.unwrap_or_default(),
                     &self.scenario.unwrap_or_default(),
                     self.topology.unwrap_or_default(),
@@ -274,8 +283,8 @@ impl NetworkModelBuilder {
             },
             NetworkModelType::ComplexNetwork(delay_multiplier) => {
                 let complex_network = ComplexNetwork::new(
-                    self.command_center.unwrap_or_default(),
-                    drones,
+                    self.command_center_id.unwrap_or_default(),
+                    device_map,
                     self.electronic_warfare_devices.unwrap_or_default(),
                     &self.scenario.unwrap_or_default(),
                     self.topology.unwrap_or_default(),
@@ -293,9 +302,7 @@ impl NetworkModelBuilder {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::device::{
-        CommandCenterBuilder, ConnectionGraph, DroneBuilder, IdToDroneMap
-    };
+    use crate::device::{ConnectionGraph, DeviceBuilder, IdToDeviceMap};
     use crate::device::systems::{TRXModule, TRXSystem};
     use crate::infection::InfectionType;
     use crate::mathphysics::Meter;
@@ -348,8 +355,8 @@ mod tests {
         ).unwrap()   
     }
    
-    fn drone_with_trx_system_set(position: Point3D) -> Drone {
-        DroneBuilder::new()
+    fn drone_with_trx_system_set(position: Point3D) -> Device {
+        DeviceBuilder::new()
             .set_global_position(position)
             .set_trx_system(
                 TRXSystem::Strength { 
@@ -358,6 +365,7 @@ mod tests {
                 }
             )
             .build()
+            .unwrap_or_else(|error| panic!("{}", error))
     }
 
     fn assert_all_messages_are_infections(
@@ -387,17 +395,19 @@ mod tests {
 
 
     #[test]
-    fn spreading_infection_messages() {
+    fn multiplying_infection_messages() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
 
-        let command_center = CommandCenterBuilder::new()
+        let command_center = DeviceBuilder::new()
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(),
                     rx_module: TRXModule::default() 
                 }
             )
-            .build();
+            .build()
+            .unwrap_or_else(|error| panic!("{}", error));
+        let command_center_id = command_center.id();
         
         // Network topology:
         //                      D
@@ -410,38 +420,38 @@ mod tests {
         //                      |
         //                      E
         //
-        let drones = [
+        let devices = [
+            command_center,
             drone_with_trx_system_set(Point3D::new(7.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(14.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(16.0, 7.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(16.0, -7.0, 0.0)),
         ];
-        let drone1_id = drones[0].id();
-        let drone2_id = drones[1].id();
-        let drone3_id = drones[2].id();
-        let drone4_id = drones[3].id();
+        let drone1_id = devices[1].id();
+        let drone2_id = devices[2].id();
+        let drone3_id = devices[3].id();
+        let drone4_id = devices[4].id();
 
-        let drone_map = IdToDroneMap::from(drones);
-        
         let mut connections = ConnectionGraph::new();
         connections.update(
-            &command_center, 
-            &drone_map, 
+            command_center_id, 
+            &IdToDeviceMap::from(devices), 
             Topology::Mesh, 
             frequency
         );
         
         let initial_message_from_drone1 = Message::new(
-            command_center.id(),
+            command_center_id,
             drone1_id,
             0, 
             MessageType::Infection(InfectionType::Jamming)
         );
         let mut infection_messages = Vec::new();
 
-        spread_infection_messages(
-            frequency, 
+        multiply_infection_messages(
             &initial_message_from_drone1, 
+            frequency, 
+            drone1_id,
             &connections, 
             &mut infection_messages
         );
@@ -453,7 +463,7 @@ mod tests {
             correct_source_and_destination_ids(
                 &infection_messages, 
                 drone1_id, 
-                command_center.id()
+                command_center_id
             )
         );
         // Message from drone1 (B) to drone2 (C).
@@ -467,15 +477,16 @@ mod tests {
         infection_messages.clear();
 
         let initial_message_from_drone2 = Message::new(
-            command_center.id(),
+            command_center_id,
             drone2_id,
             0, 
             MessageType::Infection(InfectionType::Jamming)
         );
 
-        spread_infection_messages(
-            frequency, 
+        multiply_infection_messages(
             &initial_message_from_drone2, 
+            frequency, 
+            drone2_id,
             &connections, 
             &mut infection_messages
         );

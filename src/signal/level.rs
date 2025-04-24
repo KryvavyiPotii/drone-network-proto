@@ -206,6 +206,18 @@ impl SignalLevel {
     }
 }
 
+impl PartialEq<&SignalLevel> for SignalLevel {
+    fn eq(&self, other: &&SignalLevel) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl PartialEq<SignalLevel> for &SignalLevel {
+    fn eq(&self, other: &SignalLevel) -> bool {
+        self.0 == other.0
+    }
+}
+
 impl_op_ex!(
     - |a: &SignalLevel, b: &SignalLevel| -> SignalLevel { 
         SignalLevel(SignalLevelInner::from(a.strength() - b.strength()))

@@ -34,7 +34,7 @@ fn configure_logging() {
 
 fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.6.0")
+        .version("0.7.0")
         .about("Models drone networks")
         .arg(
             Arg::new("example")

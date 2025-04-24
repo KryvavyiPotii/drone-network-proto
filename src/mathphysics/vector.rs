@@ -43,16 +43,16 @@ impl Vector3D {
         }
     }
 
-    pub fn truncate(&mut self, truncation_size: f32) { 
-        if truncation_size < 0.0 {
-            return;
-        } else if truncation_size == 0.0 {
+    pub fn truncate(&mut self, truncated_size: f32) { 
+        if truncated_size < 0.0 || truncated_size >= self.size() {
+            return; 
+        } else if truncated_size == 0.0 {
             *self = Self::default();
-        }
+        } 
 
         self.normalize();
 
-        *self *= truncation_size;
+        *self *= truncated_size;
     }
 }
 
@@ -84,5 +84,44 @@ mod tests {
         assert!(!zero_vector.terminal_point.x.is_nan());
         assert!(!zero_vector.terminal_point.y.is_nan());
         assert!(!zero_vector.terminal_point.z.is_nan());
+    }
+
+    #[test]
+    fn correct_vector_truncation() {
+        let vector_size = 5.0;
+        let original_vector = Vector3D::new(
+            Point3D::default(),
+            Point3D::new(vector_size, 0.0, 0.0)
+        );
+        
+        let negative_truncated_size = -1.0;
+        let mut not_truncated_vector = original_vector;
+        
+        not_truncated_vector.truncate(negative_truncated_size);
+        assert_eq!(not_truncated_vector, original_vector);
+
+        let too_big_truncated_size = vector_size * 2.0;
+        let mut not_truncated_vector = original_vector;
+
+        not_truncated_vector.truncate(too_big_truncated_size);
+        assert_eq!(not_truncated_vector, original_vector);
+
+        let zero_truncated_size = 0.0;
+        let mut not_truncated_vector = original_vector;
+        
+        not_truncated_vector.truncate(zero_truncated_size);
+        assert_eq!(not_truncated_vector, Vector3D::default());
+
+        let normal_truncated_size = 2.0;
+        let mut truncated_vector = original_vector;
+
+        truncated_vector.truncate(normal_truncated_size);
+        assert_eq!(
+            truncated_vector, 
+            Vector3D::new(
+                Point3D::default(),
+                Point3D::new(2.0, 0.0, 0.0)
+            )
+        );
     }
 }

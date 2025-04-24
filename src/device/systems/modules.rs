@@ -81,14 +81,14 @@ impl TRXModule {
         signal_levels
             .iter()
             .for_each(|(frequency, signal_level)|
-                self.set_signal_level(*frequency, *signal_level)
+                self.set_signal_level(*signal_level, *frequency)
             );
     }
     
     pub fn set_signal_level(
         &mut self, 
+        signal_level: SignalLevel,
         frequency: Megahertz,
-        signal_level: SignalLevel
     ) {
         let max_signal_level = *self.max_signal_level(frequency);
 

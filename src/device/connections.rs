@@ -9,10 +9,8 @@ use rustworkx_core::centrality::betweenness_centrality;
 use rustworkx_core::dictmap::DictMap;
 use rustworkx_core::shortest_path::{astar, dijkstra};
 
-use crate::device::{
-    CommandCenter, Device, DeviceId, STEP_DURATION, Transceiver, Transmitter
-};
-use crate::device::{IdToDroneMap, IdToLevelMap};
+use crate::device::{Device, DeviceId, STEP_DURATION};
+use crate::device::{IdToDeviceMap, IdToLevelMap};
 use crate::infection::{InfectionState, InfectionType};
 use crate::mathphysics::{
     kmps_to_mpms, Megahertz, Meter, Millisecond, SPEED_OF_LIGHT, 
@@ -32,69 +30,59 @@ const DELAY_DISTANCE_COEFFICIENT: f32 = 1_500_000.0;
 
 
 pub trait FindSignalLevel {
-    fn try_set_better_signal_level<T, TR>(
-        tx: &T,
-        rx: &TR,
+    fn try_set_better_signal_level(
+        tx: &Device,
+        rx: &Device,
         signal_levels: &mut IdToLevelMap,
         frequency: Megahertz
-    ) 
-    where
-        T: Transmitter + Clone,
-        TR: Transceiver;
+    ); 
 
     /// # Errors
     ///
     /// Will return Err if the first drone on found shortest path is not 
-    /// present in `IdToDroneMap`.
-    fn try_find_best_signal_levels<T: Transmitter + Clone>(
-        command_device: &T,
-        drone_map: &IdToDroneMap,
+    /// present in `IdToDeviceMap`.
+    fn try_find_best_signal_levels(
+        command_device_id: DeviceId,
+        device_map: &IdToDeviceMap,
         connections: &ConnectionGraph,
         frequency: Megahertz
     ) -> Result<IdToLevelMap, UpdateSignalError> {
-        let mut best_signal_levels = HashMap::new();
+        let Some(command_device) = device_map.get(&command_device_id) else {
+            return Err(UpdateSignalError::MissingDevice);
+        };
+        let mut best_signal_levels = HashMap::from([
+            (command_device_id, *command_device.tx_signal_level(frequency))
+        ]);
 
-        for drone in drone_map.drones() {
+        for device in device_map.devices() {
             let Ok((_, path)) = connections.find_shortest_path_from_to(
-                command_device.id(), 
-                drone.id()
+                command_device_id, 
+                device.id()
             ) else {
-                continue
+                continue;
             };
 
-            let Some(first_drone) = drone_map.get(&path[1]) else {
-                return Err(UpdateSignalError::MissingDrone)
-            };
-
-            Self::try_set_better_signal_level(
-                command_device,
-                first_drone,
-                &mut best_signal_levels,
-                frequency
-            );
-            
-            // Skipping the first element to avoid reading a command center.
             // Skipping the last element to avoid reading out of bounds.
-            for i in 1..(path.len() - 1) {
+            for i in 0..(path.len() - 1) {
                 let tx_id = path[i];
                 let rx_id = path[i + 1];
                 
-                let Some(tx_drone) = drone_map.get(&tx_id) else { 
+                let Some(tx_device) = device_map.get(&tx_id) else { 
                     break 
                 };
-                let Some(rx_drone) = drone_map.get(&rx_id) else { 
+                let Some(rx_device) = device_map.get(&rx_id) else { 
                     break 
                 };
 
                 Self::try_set_better_signal_level(
-                    tx_drone,
-                    rx_drone,
+                    tx_device,
+                    rx_device,
                     &mut best_signal_levels,
                     frequency
                 );
             }
         }
-       
+
         Ok(best_signal_levels)
     }
 }
@@ -105,7 +93,7 @@ pub enum UpdateSignalError {
     #[error("Shortest Path algorithm failed to calculate path.")]
     AlgorithmError(ShortestPathError),
     #[error("Missing a drone")]
-    MissingDrone,
+    MissingDevice,
 }
 
 impl From<ShortestPathError> for UpdateSignalError {
@@ -318,15 +306,19 @@ impl ConnectionGraph {
         self.0.clear();
     }
 
-    pub fn update<T: Transmitter>(
+    pub fn update(
         &mut self, 
-        command_device: &T,
-        drone_map: &IdToDroneMap,
+        command_device_id: DeviceId,
+        device_map: &IdToDeviceMap,
         topology: Topology,
         frequency: Megahertz
     ) {
         self.clear();
-       
+        
+        let Some(command_device) = device_map.get(&command_device_id) else {
+            return 
+        };
+
         // The drones in the command device area forward the signal to each
         // other and the drones outside the area.
         // If there are no drones inside then the drones outside can not get 
@@ -334,43 +326,47 @@ impl ConnectionGraph {
         // So, it is pointless to continue computation.
         if !self.try_connect_drones_directly_to(
             command_device, 
-            drone_map,
+            device_map,
             frequency
         ) {
             return;
         }
 
         if let Topology::Mesh = topology {
-            self.try_connect_drones_to_each_other(drone_map, frequency);
+            self.try_connect_drones_to_each_other(device_map, frequency);
         }
     }
 
     #[must_use]
-    fn try_connect_drones_directly_to<T: Transmitter>(
+    fn try_connect_drones_directly_to(
         &mut self,
-        command_device: &T,
-        drone_map: &IdToDroneMap,
+        command_device: &Device,
+        device_map: &IdToDeviceMap,
         frequency: Megahertz
     ) -> bool {
-        let mut connected = false;
         let command_device_node = self.0.add_node(command_device.id());
+        let mut connected = false;
+
+        // Avoiding loops on a command device.
+        let mut commanded_device_map = device_map.clone();
+        let _ = commanded_device_map.remove(&command_device.id());
         
-        for drone in drone_map.drones() {
+        for device in commanded_device_map.devices() {
             if let Some(distance) = command_device.connection_distance(
-                drone,
+                device,
                 frequency
             ) {
-                let node = self.0.add_node(drone.id());
+                let node = self.0.add_node(device.id());
                 
                 self.0.add_edge(command_device_node, node, distance);
                 
                 connected = true;
             };
-            if let Some(distance) = drone.connection_distance(
+            if let Some(distance) = device.connection_distance(
                 command_device,
                 frequency
             ) {
-                let node = self.0.add_node(drone.id());
+                let node = self.0.add_node(device.id());
                 
                 self.0.add_edge(node, command_device_node, distance);
             };
@@ -381,15 +377,15 @@ impl ConnectionGraph {
 
     fn try_connect_drones_to_each_other(
         &mut self, 
-        drone_map: &IdToDroneMap,
+        device_map: &IdToDeviceMap,
         frequency: Megahertz
     ) {
-        for (i, tx_drone) in drone_map.drones().enumerate() {
+        for (i, tx_drone) in device_map.devices().enumerate() {
             let tx_node = self.0.add_node(tx_drone.id());
           
             // Loops are prohibited. 
             // Otherwise, shortest path algorithms will not function properly.
-            for rx_drone in drone_map.drones().skip(i + 1) {
+            for rx_drone in device_map.devices().skip(i + 1) {
                 let rx_node = self.0.add_node(rx_drone.id());
         
                 if let Some(distance) = tx_drone.connection_distance(
@@ -565,17 +561,20 @@ impl ConnectionGraph {
     #[must_use]
     pub fn percolation_centrality(
         &self, 
-        command_center: &CommandCenter,
-        drone_map: &IdToDroneMap,
+        command_device_id: DeviceId,
+        device_map: &IdToDeviceMap,
         infection_type: &InfectionType
     ) -> HashMap<DeviceId, f32> {
+        let Some(command_device) = device_map.get(&command_device_id) else {
+            return HashMap::new() 
+        };
         let mut percolation_map = self.0
             .nodes()
             .map(|node| (node, 0.0))
             .collect();
         let percolation_states = self.percolation_states(
-            command_center, 
-            drone_map,
+            command_device, 
+            device_map,
             *infection_type
         );
         let percolation_sum = percolation_states
@@ -611,14 +610,14 @@ impl ConnectionGraph {
     #[must_use]
     fn percolation_states(
         &self,
-        command_center: &CommandCenter,
-        drone_map: &IdToDroneMap,
+        command_device: &Device,
+        device_map: &IdToDeviceMap,
         infection_type: InfectionType
     ) -> HashMap<DeviceId, f32> {
         let mut percolation_states: HashMap<DeviceId, f32> = self.0
             .nodes()
             .map(|node| {
-                let percolation_state = match drone_map.get(&node) {
+                let percolation_state = match device_map.get(&node) {
                     Some(drone) => {
                         percolation_state_from_infection_state(
                             *drone.infection_state(&infection_type)
@@ -633,7 +632,7 @@ impl ConnectionGraph {
 
         // The command center is percolated, although it can not be infected for 
         // now (version 0.5.1).
-        percolation_states.insert(command_center.id(), 1.0);
+        percolation_states.insert(command_device.id(), 1.0);
 
         percolation_states
     }
@@ -759,7 +758,7 @@ mod tests {
         GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, NO_SIGNAL_LEVEL, 
         SignalLevel, SignalArea, WIFI_2_4GHZ_FREQUENCY
     };
-    use crate::device::{CommandCenterBuilder, Drone, DroneBuilder, UNKNOWN_ID};
+    use crate::device::{Device, DeviceBuilder, UNKNOWN_ID};
     use crate::device::systems::{TRXModule, TRXSystem};
     use crate::mathphysics::Point3D;
     
@@ -833,8 +832,8 @@ mod tests {
         ).unwrap()   
     }
 
-    fn drone_with_trx_system_set(position: Point3D) -> Drone {
-        DroneBuilder::new()
+    fn drone_with_trx_system_set(position: Point3D) -> Device {
+        DeviceBuilder::new()
             .set_global_position(position)
             .set_trx_system(
                 TRXSystem::Strength { 
@@ -844,6 +843,7 @@ mod tests {
             )
             .set_vulnerabilities(&[InfectionType::Jamming])
             .build()
+            .unwrap_or_else(|error| panic!("{}", error))
     }
 
     fn simple_mesh() -> (ConnectionGraph, Vec<DeviceId>) {
@@ -860,33 +860,35 @@ mod tests {
         //                      |
         //                      E
         //
-        let command_center = CommandCenterBuilder::new()
+        let command_center = DeviceBuilder::new()
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(), 
                     rx_module: TRXModule::default() 
                 }
             )
-            .build();
+            .build()
+            .unwrap_or_else(|error| panic!("{}", error));
+        let command_center_id = command_center.id();
         
-        let drones = [
+        let devices = [
+            command_center,
             drone_with_trx_system_set(Point3D::new(7.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(14.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(16.0, 7.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(16.0, -7.0, 0.0)),
         ];
-        let mut device_ids: Vec<DeviceId> = drones
+        let device_ids: Vec<DeviceId> = devices
             .iter()
-            .map(|drone| drone.id())
+            .map(|device| device.id())
             .collect();
-        device_ids.insert(0, command_center.id());
     
-        let drone_map = IdToDroneMap::from(drones);
+        let device_map = IdToDeviceMap::from(devices);
 
         let mut connections = ConnectionGraph::new();
         connections.update(
-            &command_center, 
-            &drone_map, 
+            command_center_id, 
+            &device_map, 
             Topology::Mesh, 
             frequency
         );
@@ -897,32 +899,34 @@ mod tests {
     fn simple_star() -> (ConnectionGraph, Vec<DeviceId>) {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
         
-        let command_center = CommandCenterBuilder::new()
+        let command_center = DeviceBuilder::new()
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: cc_tx_module(),
                     rx_module: TRXModule::default() 
                 }
             )
-            .build();
+            .build()
+            .unwrap_or_else(|error| panic!("{}", error));
+        let command_center_id = command_center.id();
 
-        let drones = [
+        let devices = [
+            command_center,
             drone_with_trx_system_set(Point3D::new(25.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(0.0, 25.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(0.0, 0.0, 25.0)),
         ];
-        let mut device_ids: Vec<DeviceId> = drones
+        let device_ids: Vec<DeviceId> = devices
             .iter()
-            .map(|drone| drone.id())
+            .map(|device| device.id())
             .collect();
-        device_ids.insert(0, command_center.id());
 
-        let drone_map = IdToDroneMap::from(drones);
+        let device_map = IdToDeviceMap::from(devices);
 
         let mut connections = ConnectionGraph::new();
         connections.update(
-            &command_center, 
-            &drone_map, 
+            command_center_id, 
+            &device_map, 
             Topology::Star, 
             frequency
         );
@@ -1054,29 +1058,32 @@ mod tests {
         //                      |
         //                      E
         //
-        let command_center = CommandCenterBuilder::new()
+        let command_center = DeviceBuilder::new()
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(), 
                     rx_module: TRXModule::default() 
                 }
             )
-            .build();
+            .build()
+            .unwrap_or_else(|error| panic!("{}", error));
+        let command_center_id = command_center.id();
         
-        let mut drones = [
+        let mut devices = [
+            command_center,
             drone_with_trx_system_set(Point3D::new(7.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(14.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(16.0, 7.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(16.0, -7.0, 0.0)),
         ];
-        let drone_b_id = drones[0].id();
-        let drone_c_id = drones[1].id();
-        let drone_d_id = drones[2].id();
-        let drone_e_id = drones[3].id();
+        let drone_b_id = devices[1].id();
+        let drone_c_id = devices[2].id();
+        let drone_d_id = devices[3].id();
+        let drone_e_id = devices[4].id();
 
         // In order to infect the drone we need to allow receiving.
-        drones[0].set_rx_signal_level(frequency, GREEN_SIGNAL_LEVEL);
-        drones[1].set_rx_signal_level(frequency, GREEN_SIGNAL_LEVEL);
+        devices[1].set_rx_signal_level(GREEN_SIGNAL_LEVEL, frequency);
+        devices[2].set_rx_signal_level(GREEN_SIGNAL_LEVEL, frequency);
         
         let infection_message_for_b = Message::new(
             UNKNOWN_ID, 
@@ -1092,39 +1099,39 @@ mod tests {
         );
 
         assert!(
-            drones[0]
+            devices[1]
                 .receive_and_process_message(
+                    &infection_message_for_b,
                     frequency, 
-                    &infection_message_for_b
                 ).is_ok()
         );
-        assert!(drones[0].is_infected());
+        assert!(devices[1].is_infected());
         assert!(
-            drones[1]
+            devices[2]
                 .receive_and_process_message(
+                    &infection_message_for_c,
                     frequency, 
-                    &infection_message_for_c
                 ).is_ok()
         );
-        assert!(drones[1].is_infected());
+        assert!(devices[2].is_infected());
         
-        drones[0].set_rx_signal_level(frequency, NO_SIGNAL_LEVEL);
-        drones[1].set_rx_signal_level(frequency, NO_SIGNAL_LEVEL);
+        devices[1].set_rx_signal_level(NO_SIGNAL_LEVEL, frequency);
+        devices[2].set_rx_signal_level(NO_SIGNAL_LEVEL, frequency);
 
-        let drone_map = IdToDroneMap::from(drones);
+        let device_map = IdToDeviceMap::from(devices);
 
         let mut connections = ConnectionGraph::new();
         connections.update(
-            &command_center,
-            &drone_map,
+            command_center_id,
+            &device_map,
             Topology::Mesh,
             frequency
         );
 
         let percolation_map: HashMap<DeviceId, f32> = connections
             .percolation_centrality(
-                &command_center,
-                &drone_map,
+                command_center_id,
+                &device_map,
                 &InfectionType::Jamming
             )
             .iter()
@@ -1134,7 +1141,7 @@ mod tests {
             .collect();
         
         let expected_percolation_map = HashMap::from([
-            (command_center.id(), 0.0),
+            (command_center_id, 0.0),
             (drone_b_id, 0.5238),
             (drone_c_id, 0.8571),
             (drone_d_id, 0.0),
@@ -1148,18 +1155,19 @@ mod tests {
     fn check_delays() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
 
-        let command_center = CommandCenterBuilder::new()
+        let command_center = DeviceBuilder::new()
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: cc_tx_module(),
                     rx_module: TRXModule::default() 
                 }
             )
-            .build();
+            .build()
+            .unwrap_or_else(|error| panic!("{}", error));
         let command_center_id = command_center.id();
 
         let distance = 50.0;
-        let drone = DroneBuilder::new()
+        let drone = DeviceBuilder::new()
             .set_global_position(Point3D::new(distance, 0.0, 0.0))
             .set_trx_system(
                 TRXSystem::Strength { 
@@ -1167,22 +1175,23 @@ mod tests {
                     rx_module: drone_rx_module() 
                 }
             )
-            .build();
+            .build()
+            .unwrap_or_else(|error| panic!("{}", error));
         let drone_id = drone.id();
 
         let mut connections = ConnectionGraph::new();
         connections.update(
-            &command_center, 
-            &IdToDroneMap::from([drone]), 
+            command_center_id, 
+            &IdToDeviceMap::from([command_center, drone]), 
             Topology::Mesh, 
             frequency
         );
 
         let expected_delays = HashMap::from([
-            (command_center.id(), 0),
+            (command_center_id, 0),
             (drone_id, 0)
         ]);
-        let no_delays = connections.delays(command_center.id(), 0.0);
+        let no_delays = connections.delays(command_center_id, 0.0);
 
         assert!(expected_delays.eq(&no_delays));
 
@@ -1190,7 +1199,7 @@ mod tests {
             (command_center_id, 0),
             (drone_id, 250)
         ]);
-        let delays = connections.delays(command_center.id(), 1.0);
+        let delays = connections.delays(command_center_id, 1.0);
 
         assert!(expected_delays.eq(&delays));
     }
@@ -1200,16 +1209,19 @@ mod tests {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
         
         // Network 1: full mesh with edge weight 1.0.
-        let command_center = CommandCenterBuilder::new()
+        let command_center = DeviceBuilder::new()
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(), 
                     rx_module: TRXModule::default() 
                 }
             )
-            .build();
+            .build()
+            .unwrap_or_else(|error| panic!("{}", error));
+        let command_center_id = command_center.id();
         
-        let drones1 = IdToDroneMap::from([
+        let devices1 = IdToDeviceMap::from([
+            command_center.clone(),
             drone_with_trx_system_set(Point3D::new(1.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(2.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(3.0, 0.0, 0.0)),
@@ -1218,8 +1230,8 @@ mod tests {
 
         let mut connections = ConnectionGraph::new();
         connections.update(
-            &command_center,
-            &drones1,
+            command_center_id,
+            &devices1,
             Topology::Mesh,
             frequency
         );
@@ -1230,7 +1242,8 @@ mod tests {
         // 
         // A -(7.0)- B -(7.0)- C -(7.0)- D -(7.0)- E 
         //
-        let drones2 = IdToDroneMap::from([
+        let devices2 = IdToDeviceMap::from([
+            command_center.clone(),
             drone_with_trx_system_set(Point3D::new(7.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(14.0, 0.0, 0.0)),
             drone_with_trx_system_set(Point3D::new(21.0, 0.0, 0.0)),
@@ -1238,8 +1251,8 @@ mod tests {
         ]);
         
         connections.update(
-            &command_center,
-            &drones2,
+            command_center_id,
+            &devices2,
             Topology::Mesh,
             frequency
         );

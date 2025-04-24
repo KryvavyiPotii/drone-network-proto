@@ -9,14 +9,10 @@ use thiserror::Error;
 use crate::signal::{
     SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
 };
-use crate::device::{
-    CommandCenter, DESTINATION_RADIUS, Device, Drone, ElectronicWarfare, 
-    STEP_DURATION, Transceiver, Transmitter, 
-};
-use crate::device::networkmodel::{
-    NetworkModel, get_drone_networks_destinations
-};
+use crate::device::{Device, DESTINATION_RADIUS, STEP_DURATION};
+use crate::device::networkmodel::NetworkModel;
 use crate::mathphysics::{Megahertz, Meter, Point3D, Position};
+use crate::message::Goal;
 
 
 const COMMAND_CENTER_RADIUS: Meter = 5.0;
@@ -27,6 +23,32 @@ const PLOT_MARGIN: u32                     = 20;
 const PLOTTERS_DESTINATION_COLOR: RGBColor    = YELLOW;
 const PLOTTERS_COMMAND_CENTER_COLOR: RGBColor = BLUE;
 
+
+fn network_models_destinations(
+    network_models: &[NetworkModel]
+) -> Vec<Point3D> {
+    let mut destinations = Vec::new();
+
+    for network_model in network_models {
+        let goal_vec: Vec<Goal> = network_model
+            .goals()
+            .values()
+            .map(|goal| *goal)
+            .collect();
+
+        goal_vec
+            .iter()
+            .for_each(|goal|
+                match goal {
+                    Goal::Attack(destination) | Goal::Reposition(destination) =>
+                        destinations.push(*destination),
+                    Goal::Undefined => (),
+                }
+            );
+    }
+
+    destinations
+}
 
 fn font_size(screen_width: u32) -> u32 {
     screen_width / 15
@@ -45,11 +67,11 @@ fn get_destination_primitive(
     Circle::new(point, radius, PLOTTERS_DESTINATION_COLOR)
 }
 
-fn get_command_center_primitive(
-    command_center: &CommandCenter,
+fn get_command_device_primitive(
+    command_device: &Device,
     screen_height: u32,
 ) -> Circle<(f64, f64, f64), u32> {
-    let point = plotters_point_from_point3d(command_center.position());
+    let point = plotters_point_from_point3d(command_device.position());
     let radius = meters_to_pixels(
         COMMAND_CENTER_RADIUS,
         screen_height
@@ -59,8 +81,8 @@ fn get_command_center_primitive(
 }
 
 fn get_drone_primitive(
-    drone: &Drone,
-    coloring: DroneColoring
+    drone: &Device,
+    coloring: DeviceColoring
 ) -> Circle<(f64, f64, f64), u32> {
     let point = plotters_point_from_point3d(drone.position());
     let color = get_drone_color(drone, coloring);
@@ -69,7 +91,7 @@ fn get_drone_primitive(
 }
 
 fn get_ewd_primitive(
-    ewd: &ElectronicWarfare,
+    ewd: &Device,
     frequency: Megahertz,
     screen_height: u32
 ) -> Circle<(f64, f64, f64), u32> {
@@ -127,15 +149,15 @@ fn color_by_signal(signal_level: SignalLevel) -> RGBColor {
     }
 }
 
-fn get_drone_color(drone: &Drone, coloring: DroneColoring) -> RGBColor {
+fn get_drone_color(drone: &Device, coloring: DeviceColoring) -> RGBColor {
     match coloring {
-        DroneColoring::Infection => color_by_infection(drone.is_infected()),
-        DroneColoring::Signal => {
+        DeviceColoring::Infection => color_by_infection(drone.is_infected()),
+        DeviceColoring::Signal => {
             let signal_level = drone.rx_signal_level(WIFI_2_4GHZ_FREQUENCY);
             
             color_by_signal(*signal_level)
         },
-        DroneColoring::SingleColor(r, g, b) => {
+        DeviceColoring::SingleColor(r, g, b) => {
             RGBColor(r, g, b)
         }
     }
@@ -179,7 +201,7 @@ pub enum DrawError {
 
 
 #[derive(Clone, Copy)]
-pub enum DroneColoring {
+pub enum DeviceColoring {
     Infection,
     Signal,
     SingleColor(u8, u8, u8),
@@ -191,7 +213,7 @@ pub struct PlottersRenderer<'a> {
     caption: String,
     screen_resolution: (u32, u32),
     axes_ranges: Axes3DRanges,
-    drone_colors: Vec<DroneColoring>,
+    drone_colors: Vec<DeviceColoring>,
     area: DrawingArea<BitMapBackend<'a>, Shift>, 
     chart: ChartContext<
         'a, 
@@ -212,7 +234,7 @@ impl<'a> PlottersRenderer<'a> {
         caption: &str,
         screen_resolution: (u32, u32),
         axes_ranges: Axes3DRanges,
-        drone_colors: &[DroneColoring],
+        drone_colors: &[DeviceColoring],
         pitch: f64,
         yaw: f64
     ) -> Self {
@@ -301,23 +323,23 @@ impl<'a> PlottersRenderer<'a> {
     /// # Panics
     ///
     /// Will panic, if `draw` returns Err.
-    pub fn draw_drone_networks(
+    pub fn draw_network_models(
         &mut self, 
-        drone_networks: &[NetworkModel]
+        network_models: &[NetworkModel]
     ) -> Result<(), DrawError> {
-        if self.drone_colors.len() != drone_networks.len() {
+        if self.drone_colors.len() != network_models.len() {
             return Err(DrawError::NotMatchingColorNumber);
         }
         
         self.reset_chart_context();
         self.chart.configure_axes().draw().unwrap();
         
-        let destinations = get_drone_networks_destinations(drone_networks);
+        let destinations = network_models_destinations(network_models);
         self.draw_destinations(&destinations);
-        self.draw_command_centers(drone_networks);
-        self.draw_drones(drone_networks);
-        for drone_network in drone_networks {
-            self.draw_ewds(drone_network.ewds());
+        self.draw_command_devices(network_models);
+        self.draw_drones(network_models);
+        for network_model in network_models {
+            self.draw_ewds(network_model.ewds());
         }
 
         self.area.present().unwrap();
@@ -326,7 +348,7 @@ impl<'a> PlottersRenderer<'a> {
         Ok(())
     }
 
-    fn draw_destinations(&mut self, destinations: &[&Point3D]) {
+    fn draw_destinations(&mut self, destinations: &[Point3D]) {
         self.chart.draw_series(
             destinations
                 .iter()
@@ -339,16 +361,16 @@ impl<'a> PlottersRenderer<'a> {
         ).unwrap();
     }
     
-    fn draw_command_centers(
+    fn draw_command_devices(
         &mut self, 
-        drone_networks: &[NetworkModel]
+        network_models: &[NetworkModel]
     ) {
         self.chart.draw_series(
-            drone_networks
+            network_models
                 .iter()
-                .map(|drone_network| 
-                    get_command_center_primitive(
-                        drone_network.command_center(), 
+                .map(|network_model| 
+                    get_command_device_primitive(
+                        network_model.command_device(), 
                         self.screen_resolution.1
                     )
                 )
@@ -357,28 +379,28 @@ impl<'a> PlottersRenderer<'a> {
 
     fn draw_drones(
         &mut self, 
-        drone_networks: &[NetworkModel]
+        network_models: &[NetworkModel]
     ) {
-        for (drone_network, coloring) in drone_networks
+        for (network_model, coloring) in network_models
             .iter()
             .zip(self.drone_colors.iter())
         {
             self.chart.draw_series(
-                drone_network
-                    .drone_iter()
+                network_model
+                    .device_iter()
                     .map(|drone| get_drone_primitive(drone, *coloring))
             ).unwrap();
         }
     }
 
-    fn draw_ewds(&mut self, ewds: &[ElectronicWarfare]) {
+    fn draw_ewds(&mut self, ewds: &[Device]) {
         for ewd in ewds {
             self.draw_ewd(ewd, WIFI_2_4GHZ_FREQUENCY);
             self.draw_ewd(ewd, GPS_L1_FREQUENCY);
         }
     }
 
-    fn draw_ewd(&mut self, ewd: &ElectronicWarfare, frequency: Megahertz) {
+    fn draw_ewd(&mut self, ewd: &Device, frequency: Megahertz) {
         self.chart.draw_series([
             get_ewd_primitive(
                 ewd, 

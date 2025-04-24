@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::mathphysics::{Megahertz, Meter};
+use crate::mathphysics::{Megahertz, Meter, MeterPerSecond, Point3D, Vector3D};
 use crate::message::Message;
 use crate::signal::{
     BLACK_SIGNAL_LEVEL, FreqToLevelMap, NO_SIGNAL_LEVEL, SignalArea, SignalLevel
@@ -19,6 +19,77 @@ pub enum ReceiveMessageError {
     TooExpensive,
     #[error("Message destination ID does not match device ID")]
     WrongDestination,
+}
+
+#[derive(Error, Debug)]
+pub enum MovementSystemBuildError {
+    #[error("Maximum speed is negative")]
+    NegativeMaxSpeed
+}
+
+
+// By default system can not move, because its maximum speed is 0.0.
+#[derive(Clone, Debug, Default)]
+pub struct MovementSystem {
+    position_in_meters: Point3D,
+    max_speed_in_mps: MeterPerSecond,
+    velocity_in_mps: Vector3D,
+}
+
+impl MovementSystem {
+    /// # Errors
+    ///
+    /// Will return `Err` if `max_speed_in_mps` is negative. 
+    pub fn build(
+        max_speed_in_mps: MeterPerSecond
+    ) -> Result<Self, MovementSystemBuildError> {
+        if max_speed_in_mps < 0.0 {
+            return Err(MovementSystemBuildError::NegativeMaxSpeed);
+        }
+
+        Ok(
+            Self {
+                // Upon creation the system does not know its position.
+                // The position should be provided by GPS (from TRXSystem).
+                position_in_meters: Point3D::default(),
+                max_speed_in_mps,
+                velocity_in_mps: Vector3D::default()
+            }
+        )
+    }
+    
+    #[must_use]
+    pub fn position(&self) -> &Point3D {
+        &self.position_in_meters
+    }
+    
+    #[must_use]
+    pub fn max_speed(&self) -> MeterPerSecond {
+        self.max_speed_in_mps
+    }
+
+    #[must_use]
+    pub fn velocity(&self) -> &Vector3D {
+        &self.velocity_in_mps
+    }
+    
+    pub fn set_position(&mut self, position: Point3D) {
+        self.position_in_meters = position;
+    }
+    
+    pub fn set_velocity(&mut self, velocity_in_mps: Vector3D) {
+        self.velocity_in_mps = velocity_in_mps;
+        self.velocity_in_mps.truncate(self.max_speed_in_mps);
+    }
+    
+    pub fn update_movement_direction(&mut self, destination: Point3D) {
+        self.velocity_in_mps = Vector3D::new(
+            self.position_in_meters,
+            destination
+        );
+        
+        self.velocity_in_mps.truncate(self.max_speed_in_mps);
+    }
 }
 
 
@@ -108,14 +179,14 @@ impl TRXSystem {
     
     pub fn set_tx_signal_level(
         &mut self, 
+        signal_level: SignalLevel,
         frequency: Megahertz,
-        signal_level: SignalLevel
     ) {
         match self {
             Self::Color(trx_module) => 
-                trx_module.set_signal_level(frequency, signal_level),
+                trx_module.set_signal_level(signal_level, frequency),
             Self::Strength { tx_module, .. } => 
-                tx_module.set_signal_level(frequency, signal_level)
+                tx_module.set_signal_level(signal_level, frequency)
         }
     }
     
@@ -158,14 +229,14 @@ impl TRXSystem {
     
     pub fn set_rx_signal_level(
         &mut self, 
+        signal_level: SignalLevel,
         frequency: Megahertz,
-        signal_level: SignalLevel
     ) {
         match self {
             Self::Color(trx_module) => 
-                trx_module.set_signal_level(frequency, signal_level),
+                trx_module.set_signal_level(signal_level, frequency),
             Self::Strength { rx_module, .. } => 
-                rx_module.set_signal_level(frequency, signal_level)
+                rx_module.set_signal_level(signal_level, frequency)
         }
     }
 
@@ -182,9 +253,7 @@ impl TRXSystem {
             return None;
         }
 
-        if self.tx_signal_level_at(frequency, distance)
-            .is_black()
-        {
+        if self.tx_signal_level_at(frequency, distance).is_black() {
             None
         } else {
             Some(distance)
@@ -209,8 +278,8 @@ impl TRXSystem {
 
     pub fn suppress_signal(
         &mut self,
+        suppressor_signal_level: SignalLevel,
         frequency: Megahertz,
-        suppressor_signal_level: SignalLevel
     ) {
         match self {
             Self::Color(trx_module) => { 
@@ -218,7 +287,7 @@ impl TRXSystem {
                 let suppressed_signal_level = suppressor_signal_level
                     .suppress_by_color(current_signal_level);
 
-                trx_module.set_signal_level(frequency, suppressed_signal_level);
+                trx_module.set_signal_level(suppressed_signal_level, frequency);
             },
             Self::Strength { tx_module, rx_module } => {
                 let current_tx_signal_level = *tx_module.signal_level(
@@ -234,12 +303,12 @@ impl TRXSystem {
                     .suppress_by_strength(current_rx_signal_level);
                 
                 tx_module.set_signal_level(
+                    suppressed_tx_signal_level,
                     frequency, 
-                    suppressed_tx_signal_level
                 );
                 rx_module.set_signal_level(
+                    suppressed_rx_signal_level,
                     frequency, 
-                    suppressed_rx_signal_level
                 );
             }
         }
@@ -254,30 +323,31 @@ impl TRXSystem {
         signal_levels
             .iter()
             .for_each(|(frequency, signal_level)|
-                self.receive_signal(*frequency, *signal_level)
+                self.receive_signal(*signal_level, *frequency)
             );
     }
 
     pub fn receive_signal(
         &mut self,
+        tx_signal_level: SignalLevel,
         frequency: Megahertz,
-        tx_signal_level: SignalLevel
     ) {
         match self {
             Self::Color(trx_module) => {
-                let current_signal_level = *trx_module.signal_level(frequency);
+                let current_signal_level = *trx_module
+                    .signal_level(frequency);
                 let received_signal_level = current_signal_level
                     .receive_by_color(tx_signal_level);
                 
-                trx_module.set_signal_level(frequency, received_signal_level);
+                trx_module.set_signal_level(received_signal_level, frequency);
             },
             Self::Strength { rx_module, .. } => {
-                let current_signal_level = *rx_module
+                let max_signal_level = *rx_module
                     .max_signal_level(frequency);
-                let received_signal_level = current_signal_level
+                let received_signal_level = max_signal_level
                     .receive_by_strength(tx_signal_level);
 
-                rx_module.set_signal_level(frequency, received_signal_level);
+                rx_module.set_signal_level(received_signal_level, frequency);
             },
         };
     }
@@ -300,7 +370,7 @@ impl TRXSystem {
                     return Err(ReceiveMessageError::TooExpensive);
                 }
 
-                rx_module.set_signal_level(frequency, new_signal_level);
+                rx_module.set_signal_level(new_signal_level, frequency);
 
                 Ok(())
             },
@@ -308,7 +378,7 @@ impl TRXSystem {
     }
 }
 
-// By default we create a non-functioning TRXSystem.
+// By default we create a non-functioning strength TRXSystem.
 impl Default for TRXSystem {
     fn default() -> Self {
         Self::Strength { 
@@ -334,6 +404,46 @@ mod tests {
 
 
     #[test]
+    fn building_movement_system_with_negative_max_speed() {
+        let result = MovementSystem::build(-5.0);
+
+        assert!(
+            matches!(result, Err(MovementSystemBuildError::NegativeMaxSpeed))
+        );
+    }
+
+    #[test]
+    fn setting_velocity() {
+        let max_speed = 5.0;
+        let mut movement_system = MovementSystem::build(max_speed)
+            .unwrap();
+
+        assert_eq!(*movement_system.velocity(), Vector3D::default());
+
+        let normal_velocity = Vector3D::new(
+            Point3D::default(), 
+            Point3D::new(max_speed / 2.0, 0.0, 0.0)
+        );
+        movement_system.set_velocity(normal_velocity);
+        
+        assert_eq!(*movement_system.velocity(), normal_velocity);
+
+        let too_high_velocity = Vector3D::new(
+            Point3D::default(), 
+            Point3D::new(max_speed * 2.0, 0.0, 0.0)
+        );
+        movement_system.set_velocity(too_high_velocity);
+
+        assert_eq!(
+            *movement_system.velocity(), 
+            Vector3D::new(
+                Point3D::default(),
+                Point3D::new(max_speed, 0.0, 0.0)
+            )
+        );
+    }
+
+    #[test]
     fn setting_even_or_too_high_rx_signal_levels() {
         let max_rx_signal_levels = HashMap::from([
             (WIFI_2_4GHZ_FREQUENCY, YELLOW_SIGNAL_LEVEL),
@@ -353,12 +463,12 @@ mod tests {
         };
 
         rx_system.set_rx_signal_level(
+            GREEN_SIGNAL_LEVEL,
             WIFI_2_4GHZ_FREQUENCY, 
-            GREEN_SIGNAL_LEVEL
         );
         rx_system.set_rx_signal_level(
+            YELLOW_SIGNAL_LEVEL,
             GPS_L1_FREQUENCY, 
-            YELLOW_SIGNAL_LEVEL
         );
 
         assert!(

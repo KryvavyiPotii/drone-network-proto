@@ -12,10 +12,6 @@ use self::renderer::PlottersRenderer;
 pub mod renderer;
 
 
-pub const START_TIME: Millisecond = 0;
-pub const END_TIME: Millisecond   = 15000;
-
-
 fn set_ctrlc_handler() -> Arc<AtomicBool> {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -27,11 +23,15 @@ fn set_ctrlc_handler() -> Arc<AtomicBool> {
     running
 }
 
-fn log_drone_count(drone_networks: &[NetworkModel]) -> String {
+fn log_device_count(network_models: &[NetworkModel]) -> String {
     let mut output = String::new();
 
-    for (i, network) in drone_networks.iter().enumerate() {
-        let entry = format!("Drone count {}: {}, ", i, network.drone_count());
+    for (i, network_model) in network_models.iter().enumerate() {
+        let entry = format!(
+            "Device count {}: {}, ", 
+            i, 
+            network_model.device_count()
+        );
         
         output.push_str(&entry); 
     }
@@ -44,23 +44,26 @@ fn log_drone_count(drone_networks: &[NetworkModel]) -> String {
 
 
 pub struct Simulation<'a> {
-    current_time_in_millis: u32,
-    end_time_in_millis: u32,
-    drone_networks: Vec<NetworkModel>,
+    start_time_in_millis: Millisecond,
+    end_time_in_millis: Millisecond,
+    current_time_in_millis: Millisecond,
+    network_models: Vec<NetworkModel>,
     renderer: PlottersRenderer<'a>
 }
 
 impl<'a> Simulation<'a> {
     #[must_use]
     pub fn new(
-        end_time_in_millis: u32,
-        drone_networks: Vec<NetworkModel>,
+        start_time_in_millis: Millisecond, 
+        end_time_in_millis: Millisecond,
+        network_models: Vec<NetworkModel>,
         renderer: PlottersRenderer<'a>
     ) -> Self {
         Self {
-            current_time_in_millis: START_TIME,
+            start_time_in_millis,
             end_time_in_millis,
-            drone_networks,
+            current_time_in_millis: start_time_in_millis,
+            network_models,
             renderer
         }
     }
@@ -71,7 +74,7 @@ impl<'a> Simulation<'a> {
     pub fn run(&mut self) {
         let running = set_ctrlc_handler(); 
 
-        let begin = self.current_time_in_millis;
+        let begin = self.start_time_in_millis;
         let end = self.end_time_in_millis;
 
         info!("Output filename: {}", self.renderer.output_filename());
@@ -80,23 +83,23 @@ impl<'a> Simulation<'a> {
                 info!(
                     "TERM, Simulation, Time: {}, {}", 
                     self.current_time_in_millis,
-                    log_drone_count(&self.drone_networks)
+                    log_device_count(&self.network_models)
                 );
                 return;
             }
 
-            self.drone_networks
+            self.network_models
                 .iter_mut()
                 .for_each(NetworkModel::update);
             
             self.renderer
-                .draw_drone_networks(&self.drone_networks)
+                .draw_network_models(&self.network_models)
                 .unwrap();
                         
             trace!(
                 "Current time: {}, {}", 
                 self.current_time_in_millis,
-                log_drone_count(&self.drone_networks)
+                log_device_count(&self.network_models)
             );
             self.current_time_in_millis += STEP_DURATION;
         }
