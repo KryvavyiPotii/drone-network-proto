@@ -1,17 +1,15 @@
 use std::collections::hash_map::Values;
 
 use crate::device::{
-    ConnectionGraph, Device, DeviceId, FindSignalLevel, IdToDeviceMap, 
-    IdToGoalMap, IdToLevelMap, STEP_DURATION, Topology, UNKNOWN_ID
+    BROADCAST_ID, ConnectionGraph, Device, DeviceId, FindSignalLevel, 
+    IdToDeviceMap, IdToGoalMap, IdToLevelMap, STEP_DURATION, Topology, 
 };
 use crate::device::networkmodel::{
-    connect_gps_to_all_devices, enqueue_infection_messages, 
-    multiply_infection_messages
+    send_gps_messages, connect_gps_to_all_devices, 
+    enqueue_infection_messages, try_multiply_infection_message_from_receivers
 };
 use crate::mathphysics::{Megahertz, Millisecond};
-use crate::message::{
-    Message, MessagePreprocessError, MessageQueue, MessageType
-};
+use crate::message::{Message, MessagePreprocessError, MessageQueue};
 use crate::signal::{
     GPS_L1_FREQUENCY, NO_SIGNAL_LEVEL, SignalLevel, WIFI_2_4GHZ_FREQUENCY
 };
@@ -32,7 +30,7 @@ fn send_message_and_handle_infection(
 ) -> Vec<DeviceId> {
     let destination_id = message.destination_id();
 
-    if destination_id == UNKNOWN_ID {
+    if destination_id == BROADCAST_ID {
         broadcast_message_and_handle_infection(
             message,
             frequency,
@@ -226,6 +224,12 @@ impl CellularAutomaton {
             &self.command_device_id,
             WIFI_2_4GHZ_FREQUENCY
         );
+        connect_gps_to_all_devices(&mut self.device_map);
+        send_gps_messages(
+            &self.device_map, 
+            &mut self.message_queue, 
+            self.current_time
+        );
     }
      
     pub fn update(&mut self) {
@@ -234,7 +238,12 @@ impl CellularAutomaton {
         self.suppress_network();
         self.remove_disconnected_devices();
         self.process_message_queue();
-        self.device_map.update_states();
+        self.device_map.update_states(); 
+        send_gps_messages(
+            &self.device_map, 
+            &mut self.message_queue, 
+            self.current_time
+        );
         connect_gps_to_all_devices(&mut self.device_map);
       
         self.current_time += STEP_DURATION;
@@ -287,17 +296,14 @@ impl CellularAutomaton {
 
             message.finish();
 
-            if let MessageType::Infection(_) = message.message_type() {
-                for receiver_id in receiver_ids {
-                    multiply_infection_messages(
-                        message, 
-                        *frequency, 
-                        receiver_id,
-                        &self.connections, 
-                        &mut infection_messages
-                    );
-                }
-            }
+            try_multiply_infection_message_from_receivers(
+                message,
+                *frequency,
+                &receiver_ids,
+                &self.device_map,
+                &self.connections,
+                &mut infection_messages
+            );
         }
         
         self.message_queue.remove_finished_messages();
@@ -353,6 +359,7 @@ mod tests {
     use crate::device::systems::{TRXModule, TRXSystem};
     use crate::infection::{InfectionType, INFECTION_DELAY};
     use crate::mathphysics::{Meter, Point3D};
+    use crate::message::MessageType;
     use crate::signal::{
         GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE,
         SignalArea
@@ -367,7 +374,9 @@ mod tests {
 
 
     fn drone_tx_area() -> SignalArea {
-        SignalArea::build(DRONE_TX_CONTROL_RADIUS).unwrap()
+        SignalArea::build(DRONE_TX_CONTROL_RADIUS)
+            .unwrap_or_else(|error| panic!("{}", error))
+           
     }
     
     fn wait_for_infection(automaton: &mut CellularAutomaton) {
@@ -376,40 +385,19 @@ mod tests {
         }
     }
     
-    fn drone_tx_module() -> TRXModule {
+    fn drone_trx_module() -> TRXModule {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
         
-        let max_tx_signal_levels = HashMap::from([
+        let max_signal_levels = HashMap::from([
             (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
         ]);
-        let tx_signal_levels = HashMap::from([(
-            frequency, 
-            SignalLevel::from_area(
-                SignalArea::build(DRONE_TX_CONTROL_RADIUS).unwrap(), 
-                frequency
-            )
-        )]);
-
-        TRXModule::build(
-            max_tx_signal_levels,
-            tx_signal_levels,
-        ).unwrap()
-    }
-
-    fn drone_rx_module() -> TRXModule {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
-        
-        let max_rx_signal_levels = HashMap::from([
-            (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
-        ]);
-        let rx_signal_levels = HashMap::from([
+        let signal_levels = HashMap::from([
             (frequency, NO_SIGNAL_LEVEL)
         ]);
 
-        TRXModule::build(
-            max_rx_signal_levels,
-            rx_signal_levels,
-        ).unwrap()   
+        TRXModule::build(max_signal_levels, signal_levels)
+            .unwrap_or_else(|error| panic!("{}", error))
+           
     }
 
 
@@ -428,11 +416,10 @@ mod tests {
             .set_trx_system(
                 TRXSystem::Color(
                     TRXModule::build(max_cc_signal_level, cc_signal_level)
-                        .unwrap()
+                        .unwrap_or_else(|error| panic!("{}", error))
                 )
             )
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
 
         let trx_module = TRXModule::build(
             HashMap::from([
@@ -443,31 +430,27 @@ mod tests {
                 (GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL)
             ]),
             HashMap::new()
-        ).unwrap();
+        ).unwrap_or_else(|error| panic!("{}", error));
 
         let drone_trx_system = TRXSystem::Color(trx_module);
 
         let drones = [
             DeviceBuilder::new()
-                .set_global_position(Point3D::new(10.0, 0.0, 0.0))
+                .set_real_position(Point3D::new(10.0, 0.0, 0.0))
                 .set_trx_system(drone_trx_system.clone())
-                .build()
-                .unwrap_or_else(|error| panic!("{}", error)),
+                .build(),
             DeviceBuilder::new()
-                .set_global_position(Point3D::new(20.0, 0.0, 0.0))
+                .set_real_position(Point3D::new(20.0, 0.0, 0.0))
                 .set_trx_system(drone_trx_system.clone())
-                .build()
-                .unwrap_or_else(|error| panic!("{}", error)),
+                .build(),
             DeviceBuilder::new()
-                .set_global_position(Point3D::new(25.0, 0.0, 0.0))
+                .set_real_position(Point3D::new(25.0, 0.0, 0.0))
                 .set_trx_system(drone_trx_system.clone())
-                .build()
-                .unwrap_or_else(|error| panic!("{}", error)),
+                .build(),
             DeviceBuilder::new()
-                .set_global_position(Point3D::new(35.0, 0.0, 0.0))
+                .set_real_position(Point3D::new(35.0, 0.0, 0.0))
                 .set_trx_system(drone_trx_system)
-                .build()
-                .unwrap_or_else(|error| panic!("{}", error)),
+                .build(),
         ]; 
 
         let mut best_signal_levels = HashMap::new();
@@ -523,12 +506,7 @@ mod tests {
     fn spread_infection_in_star() {
         let vulnerable_device_builder = DeviceBuilder::new()
             .set_vulnerabilities(&[InfectionType::Indicator])
-            .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: drone_tx_module(),
-                    rx_module: drone_rx_module() 
-                }
-            );
+            .set_trx_system(TRXSystem::Color(drone_trx_module()));
         
         // Network topology:
         //
@@ -536,20 +514,20 @@ mod tests {
         //
         let command_center = vulnerable_device_builder
             .clone()
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
         let command_center_id = command_center.id();
         
         let infected_drone = vulnerable_device_builder
             .clone()
-            .set_global_position(Point3D::new(1.1, 0.0, 0.0))
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .set_real_position(Point3D::new(1.1, 0.0, 0.0))
+            .build();
+           
         let infected_drone_id = infected_drone.id();
         let vulnerable_drone = vulnerable_device_builder
-            .set_global_position(Point3D::new(-1.1, 0.0, 0.0))
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .set_real_position(Point3D::new(-1.1, 0.0, 0.0))
+            .build();
+           
         let vulnerable_drone_id = vulnerable_drone.id();
 
         let mut devices = [command_center, infected_drone, vulnerable_drone];
@@ -645,15 +623,135 @@ mod tests {
     }
 
     #[test]
+    fn patched_devices_do_not_spread_infection() {
+        let trx_system = TRXSystem::Color(drone_trx_module());
+        let vulnerable_device_builder = DeviceBuilder::new()
+            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_trx_system(trx_system.clone());
+        
+        // Network topology:
+        //
+        // B -(1.1)- A -(1.1)- C
+        //
+        let patched_command_center = DeviceBuilder::new()
+            .set_trx_system(trx_system)
+            .build();
+           
+        let patched_command_center_id = patched_command_center.id();
+        
+        let infected_drone = vulnerable_device_builder
+            .clone()
+            .set_real_position(Point3D::new(1.1, 0.0, 0.0))
+            .build();
+           
+        let infected_drone_id = infected_drone.id();
+        let vulnerable_drone = vulnerable_device_builder
+            .set_real_position(Point3D::new(-1.1, 0.0, 0.0))
+            .build();
+           
+        let vulnerable_drone_id = vulnerable_drone.id();
+
+        let mut devices = [
+            patched_command_center, 
+            infected_drone, 
+            vulnerable_drone
+        ];
+        // We need to manually set all rx signal levels to GREEN because in 
+        // `CellularAutomaton` signal level changes happen non-
+        // deterministically.
+        for device in &mut devices {
+            device.set_rx_signal_level(
+                GREEN_SIGNAL_LEVEL,
+                WIFI_2_4GHZ_FREQUENCY, 
+            );
+        }
+        let scenario = vec!((
+            WIFI_2_4GHZ_FREQUENCY,
+            Message::new(
+                patched_command_center_id,
+                infected_drone_id,
+                0, 
+                MessageType::Infection(InfectionType::Indicator)
+            ),
+        ));
+        let device_map = IdToDeviceMap::from(devices);
+       
+        let mut automaton = CellularAutomaton::new(
+            patched_command_center_id, 
+            device_map, 
+            Vec::new(), 
+            &scenario, 
+            Topology::Star, 
+        );
+
+        assert!(
+            !automaton.device_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !automaton.device_map
+                .get(&vulnerable_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!automaton.command_device().is_infected());
+
+        automaton.update();
+        
+        assert!(
+            automaton.device_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !automaton.device_map
+                .get(&vulnerable_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!automaton.command_device().is_infected());
+
+        wait_for_infection(&mut automaton);
+
+        assert!(
+            automaton.device_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !automaton.device_map
+                .get(&vulnerable_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!automaton.command_device().is_infected());
+
+        wait_for_infection(&mut automaton);
+
+        assert!(
+            automaton.device_map
+                .get(&infected_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(
+            !automaton.device_map
+                .get(&vulnerable_drone_id)
+                .unwrap()
+                .is_infected()
+        );
+        assert!(!automaton.command_device().is_infected());
+    }
+
+    #[test]
     fn spread_infection_in_mesh() {
         let vulnerable_device_builder = DeviceBuilder::new()
             .set_vulnerabilities(&[InfectionType::Indicator])
-            .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: drone_tx_module(),
-                    rx_module: drone_rx_module() 
-                }
-            );
+            .set_trx_system(TRXSystem::Color(drone_trx_module()));
         
         // Network Edges:
         // 
@@ -664,33 +762,33 @@ mod tests {
         //
         let command_center = vulnerable_device_builder
             .clone()
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
         let command_center_id = command_center.id();
         
         let infected_drone = vulnerable_device_builder
             .clone()
-            .set_global_position(Point3D::new(10.0, 0.0, 0.0))
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .set_real_position(Point3D::new(10.0, 0.0, 0.0))
+            .build();
+           
         let infected_drone_id = infected_drone.id();
         let vulnerable_drone1 = vulnerable_device_builder
             .clone()
-            .set_global_position(Point3D::new(1.1, 0.0, 0.0))
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .set_real_position(Point3D::new(1.1, 0.0, 0.0))
+            .build();
+           
         let vulnerable_drone_id1 = vulnerable_drone1.id();
         let vulnerable_drone2 = vulnerable_device_builder
             .clone()
-            .set_global_position(Point3D::new(2.0, 0.0, 0.0))
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .set_real_position(Point3D::new(2.0, 0.0, 0.0))
+            .build();
+           
         let vulnerable_drone_id2 = vulnerable_drone2.id();
         let vulnerable_drone3 = vulnerable_device_builder
             .clone()
-            .set_global_position(Point3D::new(3.0, 0.0, 0.0))
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .set_real_position(Point3D::new(3.0, 0.0, 0.0))
+            .build();
+           
         let vulnerable_drone_id3 = vulnerable_drone3.id();
         
         let mut devices = [

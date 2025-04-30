@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ops;
 
 use derive_more::{Add, Mul};
@@ -22,22 +21,23 @@ pub use queue::MessageQueue;
 pub mod queue;
 
 
-pub type DelaySnapshot = HashMap<DeviceId, u32>;
-
-
-pub const SET_GOAL_COST: MessageCost     = MessageCost(
+const GPS_COST: MessageCost       = MessageCost(
     GREEN_SIGNAL_STRENGTH_VALUE / 100.0 
 );
-pub const INFECTION_COST: MessageCost       = MessageCost(
+const INFECTION_COST: MessageCost = MessageCost(
     GREEN_SIGNAL_STRENGTH_VALUE / 50.0
+);
+const SET_GOAL_COST: MessageCost  = MessageCost(
+    GREEN_SIGNAL_STRENGTH_VALUE / 100.0 
 );
 
 
 fn define_message_execution_cost(message_type: &MessageType) -> MessageCost {
     match message_type {
-        MessageType::SetGoal(_) => SET_GOAL_COST,
+        MessageType::GPS(_)       => GPS_COST,
         // TODO add cost dependency on infection type
         MessageType::Infection(_) => INFECTION_COST,
+        MessageType::SetGoal(_)   => SET_GOAL_COST,
     }
 }
 
@@ -99,8 +99,9 @@ pub enum Goal {
 
 #[derive(Clone, Copy, Debug)]
 pub enum MessageType {
-    SetGoal(Goal),
+    GPS(Point3D),
     Infection(InfectionType),
+    SetGoal(Goal),
 }
 
 
@@ -227,7 +228,7 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use crate::device::UNKNOWN_ID;
+    use crate::device::{BROADCAST_ID, UNKNOWN_ID};
 
     use super::*;
 
@@ -237,7 +238,7 @@ mod tests {
         let current_time = 10;
         let mut message = Message::new(
             UNKNOWN_ID,
-            UNKNOWN_ID,
+            BROADCAST_ID,
             current_time, 
             MessageType::SetGoal(Goal::Undefined)
         );
@@ -256,7 +257,7 @@ mod tests {
         let current_time = 12;
         let mut message = Message::new(
             UNKNOWN_ID,
-            UNKNOWN_ID,
+            BROADCAST_ID,
             50, 
             MessageType::SetGoal(Goal::Undefined)
         );
@@ -274,7 +275,7 @@ mod tests {
         let current_time = 12;
         let mut message = Message::new(
             UNKNOWN_ID,
-            UNKNOWN_ID,
+            BROADCAST_ID,
             current_time, 
             MessageType::SetGoal(Goal::Undefined)
         );

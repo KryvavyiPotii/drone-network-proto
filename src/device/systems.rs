@@ -103,7 +103,7 @@ impl TRXSystem {
     #[must_use]
     pub fn tx_module(&self) -> &TRXModule {
         match self {
-            Self::Color(trx_module) => trx_module,
+            Self::Color(trx_module)          => trx_module,
             Self::Strength { tx_module, .. } => tx_module 
         }
     }
@@ -111,7 +111,7 @@ impl TRXSystem {
     #[must_use]
     pub fn rx_module(&self) -> &TRXModule {
         match self {
-            Self::Color(trx_module) => trx_module,
+            Self::Color(trx_module)          => trx_module,
             Self::Strength { rx_module, .. } => rx_module 
         }
     }
@@ -119,7 +119,7 @@ impl TRXSystem {
     #[must_use]
     pub fn tx_module_mut(&mut self) -> &mut TRXModule {
         match self {
-            Self::Color(trx_module) => trx_module,
+            Self::Color(trx_module)          => trx_module,
             Self::Strength { tx_module, .. } => tx_module 
         }
     }
@@ -127,7 +127,7 @@ impl TRXSystem {
     #[must_use]
     pub fn rx_module_mut(&mut self) -> &mut TRXModule {
         match self {
-            Self::Color(trx_module) => trx_module,
+            Self::Color(trx_module)          => trx_module,
             Self::Strength { rx_module, .. } => rx_module 
         }
     }
@@ -135,17 +135,17 @@ impl TRXSystem {
     #[must_use]
     pub fn max_tx_signal_level(&self, frequency: Megahertz) -> &SignalLevel {
         match self {
-            Self::Color(trx_module) => 
+            Self::Color(trx_module)          => 
                 trx_module.max_signal_level(frequency),
             Self::Strength { tx_module, .. } => 
-            tx_module.max_signal_level(frequency) 
+                tx_module.max_signal_level(frequency) 
         }
     }
     
     #[must_use]
     pub fn tx_signal_levels(&self) -> &FreqToLevelMap {
         match self {
-            Self::Color(trx_module) => trx_module.signal_levels(),
+            Self::Color(trx_module)          => trx_module.signal_levels(),
             Self::Strength { tx_module, .. } => tx_module.signal_levels() 
         }
     }
@@ -153,7 +153,7 @@ impl TRXSystem {
     #[must_use]
     pub fn tx_signal_level(&self, frequency: Megahertz) -> &SignalLevel {
         match self {
-            Self::Color(trx_module) => 
+            Self::Color(trx_module)          => 
                 trx_module.signal_level(frequency),
             Self::Strength { tx_module, .. } => 
                 tx_module.signal_level(frequency) 
@@ -170,7 +170,7 @@ impl TRXSystem {
     
     pub fn set_tx_signal_levels(&mut self, signal_levels: &FreqToLevelMap) {
         match self {
-            Self::Color(trx_module) => 
+            Self::Color(trx_module)          => 
                 trx_module.set_signal_levels(signal_levels),
             Self::Strength { tx_module, .. } => 
                 tx_module.set_signal_levels(signal_levels)
@@ -183,7 +183,7 @@ impl TRXSystem {
         frequency: Megahertz,
     ) {
         match self {
-            Self::Color(trx_module) => 
+            Self::Color(trx_module)          => 
                 trx_module.set_signal_level(signal_level, frequency),
             Self::Strength { tx_module, .. } => 
                 tx_module.set_signal_level(signal_level, frequency)
@@ -193,7 +193,7 @@ impl TRXSystem {
     #[must_use]
     pub fn max_rx_signal_level(&self, frequency: Megahertz) -> &SignalLevel {
         match self {
-            Self::Color(trx_module) => 
+            Self::Color(trx_module)          => 
                 trx_module.max_signal_level(frequency),
             Self::Strength { rx_module, .. } => 
                 rx_module.max_signal_level(frequency) 
@@ -203,7 +203,7 @@ impl TRXSystem {
     #[must_use]
     pub fn rx_signal_levels(&self) -> &FreqToLevelMap {
         match self {
-            Self::Color(trx_module) => trx_module.signal_levels(),
+            Self::Color(trx_module)          => trx_module.signal_levels(),
             Self::Strength { rx_module, .. } => rx_module.signal_levels() 
         }
     }
@@ -211,7 +211,7 @@ impl TRXSystem {
     #[must_use]
     pub fn rx_signal_level(&self, frequency: Megahertz) -> &SignalLevel {
         match self {
-            Self::Color(trx_module) => 
+            Self::Color(trx_module)          => 
                 trx_module.signal_level(frequency),
             Self::Strength { rx_module, .. } => 
                 rx_module.signal_level(frequency) 
@@ -220,7 +220,7 @@ impl TRXSystem {
     
     pub fn set_rx_signal_levels(&mut self, signal_levels: &FreqToLevelMap) {
         match self {
-            Self::Color(trx_module) => 
+            Self::Color(trx_module)          => 
                 trx_module.set_signal_levels(signal_levels),
             Self::Strength { rx_module, .. } => 
                 rx_module.set_signal_levels(signal_levels)
@@ -233,7 +233,7 @@ impl TRXSystem {
         frequency: Megahertz,
     ) {
         match self {
-            Self::Color(trx_module) => 
+            Self::Color(trx_module)          => 
                 trx_module.set_signal_level(signal_level, frequency),
             Self::Strength { rx_module, .. } => 
                 rx_module.set_signal_level(signal_level, frequency)
@@ -267,7 +267,7 @@ impl TRXSystem {
         distance: Meter
     ) -> SignalLevel {
         match self {
-            Self::Color(trx_module) => trx_module
+            Self::Color(trx_module)          => trx_module
                 .signal_level(frequency)
                 .at_by_zone(frequency, distance),
             Self::Strength { tx_module, .. } => tx_module
@@ -282,7 +282,7 @@ impl TRXSystem {
         frequency: Megahertz,
     ) {
         match self {
-            Self::Color(trx_module) => { 
+            Self::Color(trx_module)                 => { 
                 let current_signal_level = *trx_module.signal_level(frequency);
                 let suppressed_signal_level = suppressor_signal_level
                     .suppress_by_color(current_signal_level);
@@ -333,7 +333,7 @@ impl TRXSystem {
         frequency: Megahertz,
     ) {
         match self {
-            Self::Color(trx_module) => {
+            Self::Color(trx_module)          => {
                 let current_signal_level = *trx_module
                     .signal_level(frequency);
                 let received_signal_level = current_signal_level
@@ -361,7 +361,7 @@ impl TRXSystem {
         message: &Message
     ) -> Result<(), ReceiveMessageError> {
         match self {
-            Self::Color(_) => Ok(()),
+            Self::Color(_)                   => Ok(()),
             Self::Strength { rx_module, .. } => {
                 let current_signal_level = rx_module.signal_level(frequency);
                 let new_signal_level = current_signal_level - message.cost();
@@ -393,7 +393,7 @@ impl Default for TRXSystem {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::device::UNKNOWN_ID;
+    use crate::device::{BROADCAST_ID, UNKNOWN_ID};
     use crate::message::{Goal, Message, MessageType};
     use crate::signal::{
         SignalStrength, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL, 
@@ -535,7 +535,7 @@ mod tests {
         let frequency = GPS_L1_FREQUENCY;
         let message = Message::new(
             UNKNOWN_ID,
-            UNKNOWN_ID,
+            BROADCAST_ID,
             0, 
             MessageType::SetGoal(Goal::Undefined)
         );
@@ -567,7 +567,7 @@ mod tests {
         let frequency = GPS_L1_FREQUENCY;
         let message = Message::new(
             UNKNOWN_ID,
-            UNKNOWN_ID,
+            BROADCAST_ID,
             0, 
             MessageType::SetGoal(Goal::Undefined)
         );
@@ -593,7 +593,7 @@ mod tests {
         let frequency = GPS_L1_FREQUENCY;
         let message = Message::new(
             UNKNOWN_ID,
-            UNKNOWN_ID,
+            BROADCAST_ID,
             0, 
             MessageType::SetGoal(Goal::Undefined)
         );

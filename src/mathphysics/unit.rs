@@ -1,4 +1,4 @@
-pub type Millisecond = u32;
+pub type Millisecond = i32;
 pub type Second = f32;
 pub type Meter = f32;
 pub type Kilometer = f32;
@@ -51,11 +51,11 @@ pub fn time_in_secs_from_distance_and_speed(
 pub fn time_in_millis_from_distance_and_speed(
     distance: Meter, 
     speed: MeterPerMillisecond
-) -> MeterPerMillisecond {
-    (distance / speed).round() as MeterPerMillisecond
+) -> Millisecond {
+    (distance / speed).round() as Millisecond
 }
 
 #[must_use]
 pub fn wave_length_in_meters(frequency: Megahertz) -> Meter {
-    SPEED_OF_LIGHT / frequency as KilometerPerSecond / CONVERSION_CONST
+    SPEED_OF_LIGHT / (frequency as KilometerPerSecond * CONVERSION_CONST) 
 }

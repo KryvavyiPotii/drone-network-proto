@@ -1,8 +1,8 @@
 use crate::signal::{SignalLevel, YELLOW_SIGNAL_LEVEL};
-use crate::mathphysics::Millisecond;
+use crate::mathphysics::{Megahertz, Millisecond};
 
 
-pub const INFECTION_DELAY: Millisecond = 500;
+pub const INFECTION_DELAY: Millisecond      = 500;
 pub const JAMMING_SIGNAL_LEVEL: SignalLevel = YELLOW_SIGNAL_LEVEL;
 
 
@@ -23,6 +23,6 @@ pub enum InfectionState {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum InfectionType { 
     Indicator,
-    Jamming,
+    Jamming(Megahertz),
     // TODO struct field tampering
 }

@@ -18,7 +18,7 @@ use crate::mathphysics::{
 };
 
 
-pub type DelaySnapshot = HashMap<DeviceId, u32>;
+pub type DelaySnapshot = HashMap<DeviceId, i32>;
 
 type DijkstraResultStruct = (
     Vec<DeviceId>,
@@ -27,6 +27,7 @@ type DijkstraResultStruct = (
 );
 
 const DELAY_DISTANCE_COEFFICIENT: f32 = 1_500_000.0;
+const ERROR_MARGIN: f32               = 0.01;
 
 
 pub trait FindSignalLevel {
@@ -191,8 +192,8 @@ fn percolation_state_from_infection_state(
 ) -> f32 {
     match infection_state {
         InfectionState::Vulnerable => 1.0,
-        InfectionState::Infected => 0.5,
-        InfectionState::Patched => 0.0
+        InfectionState::Infected   => 0.5,
+        InfectionState::Patched    => 0.0
     } 
 }
 
@@ -202,11 +203,11 @@ fn delay_to(distance: Meter, multiplier: f32) -> Millisecond {
         return 0;
     }
 
-    let delay = (multiplier * time_in_millis_from_distance_and_speed(
+    let time = time_in_millis_from_distance_and_speed(
         distance * DELAY_DISTANCE_COEFFICIENT, 
         kmps_to_mpms(SPEED_OF_LIGHT) 
-    )) as Millisecond;
-
+    );
+    let delay = multiplier.round() as Millisecond * time;
     let reminder = delay % STEP_DURATION;
     
     delay - reminder
@@ -519,13 +520,6 @@ impl ConnectionGraph {
         todo!()
     }
 
-    #[must_use]
-    fn directed_weighted_triangles_and_degree_iter(
-        &self
-    ) {
-        todo!()
-    }
-    
     /// # Panics
     /// 
     /// Will panic if `rustworkx_core::shortest_path::dijkstra` becomes 
@@ -619,11 +613,15 @@ impl ConnectionGraph {
             .map(|node| {
                 let percolation_state = match device_map.get(&node) {
                     Some(drone) => {
+                        let infection_state = *drone.infection_state(
+                            &infection_type
+                        );
+
                         percolation_state_from_infection_state(
-                            *drone.infection_state(&infection_type)
+                            infection_state
                         )
                     },
-                    None => 0.0
+                    None        => 0.0
                 };
 
                 (node, percolation_state)
@@ -716,10 +714,17 @@ impl ConnectionGraph {
                     counter += 1;
                     number_of_paths_through_map.insert(neighbor, 0.0); 
                     path_map.insert(neighbor, vec![current_node]);
-                } else if neighbor_distance == *seen_map
-                    .get(&neighbor)
-                    .unwrap()
-                {
+                } else {
+                    let neighbor_seen = *seen_map
+                        .get(&neighbor)
+                        .unwrap();
+
+                    if (neighbor_distance - neighbor_seen).abs() 
+                        > ERROR_MARGIN 
+                    {
+                        continue;
+                    }
+
                     let through_neighbor = *number_of_paths_through_map
                         .get(&neighbor)
                         .unwrap();
@@ -833,17 +838,17 @@ mod tests {
     }
 
     fn drone_with_trx_system_set(position: Point3D) -> Device {
+        let trx_system = TRXSystem::Strength { 
+            tx_module: drone_tx_module(), 
+            rx_module: drone_rx_module()
+        };
+        let vulnerabilities =[InfectionType::Jamming(WIFI_2_4GHZ_FREQUENCY)];
+        
         DeviceBuilder::new()
-            .set_global_position(position)
-            .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: drone_tx_module(), 
-                    rx_module: drone_rx_module()
-                }
-            )
-            .set_vulnerabilities(&[InfectionType::Jamming])
+            .set_real_position(position)
+            .set_trx_system(trx_system)
+            .set_vulnerabilities(&vulnerabilities)
             .build()
-            .unwrap_or_else(|error| panic!("{}", error))
     }
 
     fn simple_mesh() -> (ConnectionGraph, Vec<DeviceId>) {
@@ -867,8 +872,7 @@ mod tests {
                     rx_module: TRXModule::default() 
                 }
             )
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
         let command_center_id = command_center.id();
         
         let devices = [
@@ -906,8 +910,7 @@ mod tests {
                     rx_module: TRXModule::default() 
                 }
             )
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
         let command_center_id = command_center.id();
 
         let devices = [
@@ -1065,8 +1068,7 @@ mod tests {
                     rx_module: TRXModule::default() 
                 }
             )
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
         let command_center_id = command_center.id();
         
         let mut devices = [
@@ -1089,13 +1091,13 @@ mod tests {
             UNKNOWN_ID, 
             drone_b_id, 
             0, 
-            MessageType::Infection(InfectionType::Jamming)
+            MessageType::Infection(InfectionType::Jamming(frequency))
         );
         let infection_message_for_c = Message::new(
             UNKNOWN_ID, 
             drone_c_id, 
             0, 
-            MessageType::Infection(InfectionType::Jamming)
+            MessageType::Infection(InfectionType::Jamming(frequency))
         );
 
         assert!(
@@ -1132,7 +1134,7 @@ mod tests {
             .percolation_centrality(
                 command_center_id,
                 &device_map,
-                &InfectionType::Jamming
+                &InfectionType::Jamming(frequency)
             )
             .iter()
             .map(|(node, percolation)| 
@@ -1162,21 +1164,19 @@ mod tests {
                     rx_module: TRXModule::default() 
                 }
             )
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
         let command_center_id = command_center.id();
 
         let distance = 50.0;
         let drone = DeviceBuilder::new()
-            .set_global_position(Point3D::new(distance, 0.0, 0.0))
+            .set_real_position(Point3D::new(distance, 0.0, 0.0))
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: TRXModule::default(),
                     rx_module: drone_rx_module() 
                 }
             )
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
         let drone_id = drone.id();
 
         let mut connections = ConnectionGraph::new();
@@ -1216,8 +1216,7 @@ mod tests {
                     rx_module: TRXModule::default() 
                 }
             )
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
         let command_center_id = command_center.id();
         
         let devices1 = IdToDeviceMap::from([

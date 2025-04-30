@@ -34,7 +34,7 @@ fn configure_logging() {
 
 fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.7.0")
+        .version("0.8.0")
         .about("Models drone networks")
         .arg(
             Arg::new("example")
@@ -46,7 +46,7 @@ fn cli() {
 
     if let Some(num) = matches.get_one::<u8>("example") {
         match num {
-            1 => examples::gps_only(
+            1  => examples::gps_only(
                 &Config::new(
                     "Complex network (Star, GPS EWD)",
                     false,
@@ -54,7 +54,7 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            2 => examples::gps_and_control(
+            2  => examples::gps_and_control(
                 &Config::new(
                     "Complex network (Star, GPS and Control EWD)",
                     false,
@@ -62,7 +62,7 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            3 => examples::command_delay(
+            3  => examples::command_delay(
                 &Config::new(
                     "Complex network (Star, delays)",
                     true,
@@ -70,7 +70,7 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            4 => examples::signal_color(
+            4  => examples::signal_color(
                 &Config::new(
                     "Complex network (Star, signal color)",
                     false,
@@ -78,7 +78,7 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            5 => examples::infection(
+            5  => examples::infection(
                 &Config::new(
                     "Complex network (Star, infection)",
                     false,
@@ -86,7 +86,7 @@ fn cli() {
                     Topology::Star
                 )
             ),
-            6 => examples::gps_only(
+            6  => examples::gps_only(
                 &Config::new(
                     "Complex network (Mesh, GPS EWD)",
                     false,
@@ -94,7 +94,7 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            7 => examples::gps_and_control(
+            7  => examples::gps_and_control(
                 &Config::new(
                     "Complex network (Mesh, GPS and Control EWD)",
                     false,
@@ -102,7 +102,7 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            8 => examples::command_delay(
+            8  => examples::command_delay(
                 &Config::new(
                     "Complex network (Mesh, delays)",
                     true,
@@ -110,7 +110,7 @@ fn cli() {
                     Topology::Mesh
                 )
             ),
-            9 => examples::signal_color(
+            9  => examples::signal_color(
                 &Config::new(
                     "Complex network (Mesh, signal color)",
                     false,

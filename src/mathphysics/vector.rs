@@ -44,15 +44,21 @@ impl Vector3D {
     }
 
     pub fn truncate(&mut self, truncated_size: f32) { 
-        if truncated_size < 0.0 || truncated_size >= self.size() {
-            return; 
-        } else if truncated_size == 0.0 {
-            *self = Self::default();
-        } 
+        if truncated_size < self.size() {
+            self.scale_to(truncated_size);
+        }
+    }
 
+    pub fn scale_to(&mut self, scaled_size: f32) {
+        if scaled_size < 0.0 {
+            return; 
+        } else if scaled_size == 0.0 {
+            *self = Self::default();
+        }
+        
         self.normalize();
 
-        *self *= truncated_size;
+        *self *= scaled_size;
     }
 }
 
@@ -94,33 +100,78 @@ mod tests {
             Point3D::new(vector_size, 0.0, 0.0)
         );
         
-        let negative_truncated_size = -1.0;
+        let negative_size = -1.0;
         let mut not_truncated_vector = original_vector;
         
-        not_truncated_vector.truncate(negative_truncated_size);
+        not_truncated_vector.truncate(negative_size);
         assert_eq!(not_truncated_vector, original_vector);
 
-        let too_big_truncated_size = vector_size * 2.0;
+        let bigger_size = vector_size * 2.0;
         let mut not_truncated_vector = original_vector;
 
-        not_truncated_vector.truncate(too_big_truncated_size);
+        not_truncated_vector.truncate(bigger_size);
         assert_eq!(not_truncated_vector, original_vector);
 
-        let zero_truncated_size = 0.0;
+        let zero_size = 0.0;
         let mut not_truncated_vector = original_vector;
         
-        not_truncated_vector.truncate(zero_truncated_size);
+        not_truncated_vector.truncate(zero_size);
         assert_eq!(not_truncated_vector, Vector3D::default());
 
-        let normal_truncated_size = 2.0;
+        let smaller_size = vector_size / 2.0;
         let mut truncated_vector = original_vector;
 
-        truncated_vector.truncate(normal_truncated_size);
+        truncated_vector.truncate(smaller_size);
         assert_eq!(
             truncated_vector, 
             Vector3D::new(
                 Point3D::default(),
-                Point3D::new(2.0, 0.0, 0.0)
+                Point3D::new(smaller_size, 0.0, 0.0)
+            )
+        );
+    }
+
+    #[test]
+    fn correct_vector_scaling() {
+        let vector_size = 5.0;
+        let original_vector = Vector3D::new(
+            Point3D::default(),
+            Point3D::new(vector_size, 0.0, 0.0)
+        );
+        
+        let negative_size = -1.0;
+        let mut not_scaled_vector = original_vector;
+        
+        not_scaled_vector.scale_to(negative_size);
+        assert_eq!(not_scaled_vector, original_vector);
+
+        let bigger_size = vector_size * 2.0;
+        let mut bigger_vector = original_vector;
+
+        bigger_vector.scale_to(bigger_size);
+        assert_eq!(
+            bigger_vector, 
+            Vector3D::new(
+                Point3D::default(),
+                Point3D::new(bigger_size, 0.0, 0.0)
+            )
+        );
+
+        let zero_size = 0.0;
+        let mut defaulted_vector = original_vector;
+        
+        defaulted_vector.scale_to(zero_size);
+        assert_eq!(defaulted_vector, Vector3D::default());
+
+        let smaller_size = vector_size / 2.0;
+        let mut smaller_vector = original_vector;
+
+        smaller_vector.scale_to(smaller_size);
+        assert_eq!(
+            smaller_vector, 
+            Vector3D::new(
+                Point3D::default(),
+                Point3D::new(smaller_size, 0.0, 0.0)
             )
         );
     }

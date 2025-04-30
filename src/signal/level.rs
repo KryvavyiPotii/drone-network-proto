@@ -153,7 +153,7 @@ impl SignalLevel {
             SignalLevelInner::Black(_) | SignalLevelInner::Red(_) => 
                 BLACK_SIGNAL_LEVEL,
             SignalLevelInner::Yellow(_) => RED_SIGNAL_LEVEL,
-            SignalLevelInner::Green(_) => YELLOW_SIGNAL_LEVEL
+            SignalLevelInner::Green(_)  => YELLOW_SIGNAL_LEVEL
         }
     }
 
@@ -161,9 +161,9 @@ impl SignalLevel {
     pub fn higher_level(&self) -> Self {
         match self.0 {
             SignalLevelInner::Black(_) => RED_SIGNAL_LEVEL,
-            SignalLevelInner::Red(_) => YELLOW_SIGNAL_LEVEL,
-            SignalLevelInner::Yellow(_) | SignalLevelInner::Green(_)
-                => GREEN_SIGNAL_LEVEL 
+            SignalLevelInner::Red(_)   => YELLOW_SIGNAL_LEVEL,
+            SignalLevelInner::Yellow(_) | SignalLevelInner::Green(_) => 
+                GREEN_SIGNAL_LEVEL 
         }
     }
 

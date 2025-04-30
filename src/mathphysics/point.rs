@@ -70,6 +70,22 @@ impl_op_ex!(
     }
 );
 
+impl PartialEq<&Point3D> for Point3D {
+    fn eq(&self, other: &&Point3D) -> bool {
+        self.x == other.x 
+        && self.y == other.y 
+        && self.z == other.z
+    }
+}
+
+impl PartialEq<Point3D> for &Point3D {
+    fn eq(&self, other: &Point3D) -> bool {
+        self.x == other.x 
+        && self.y == other.y 
+        && self.z == other.z
+    }
+}
+
 impl From<(f32, f32, f32)> for Point3D {
     fn from(value: (f32, f32, f32)) -> Self {
         Self { 

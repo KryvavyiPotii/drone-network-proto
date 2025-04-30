@@ -253,16 +253,11 @@ mod tests {
             ).unwrap_or_else(|error| panic!("{}", error)) 
         };
 
-        let command_device = DeviceBuilder::new()
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
-        let not_receiving_device = DeviceBuilder::new()
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+        let command_device = DeviceBuilder::new().build();
+        let not_receiving_device = DeviceBuilder::new().build();
         let receiving_device = DeviceBuilder::new()
             .set_trx_system(trx_system)
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
         
         let command_device_id = command_device.id();
         let not_receiving_device_id = not_receiving_device.id();
@@ -286,12 +281,11 @@ mod tests {
     }
 
     #[test]
-    fn setting_signal_levels() {
+    fn skip_absent_device_ids_on_setting_rx_signal_levels() {
         let frequency1 = 500;
         let frequency2 = 1_500;
-        let unknown_frequency = 2_000;
 
-        let trx_module = TRXModule::build(
+        let rx_module = TRXModule::build(
             HashMap::from([
                 (frequency1, GREEN_SIGNAL_LEVEL),
                 (frequency2, GREEN_SIGNAL_LEVEL),
@@ -302,18 +296,18 @@ mod tests {
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
         let trx_system = TRXSystem::Strength { 
-            tx_module: trx_module.clone(), 
-            rx_module: trx_module 
+            tx_module: TRXModule::default(), 
+            rx_module 
         };
         
         let device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
         let device2 = DeviceBuilder::new()
             .set_trx_system(trx_system)
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
         
         let device1_id = device1.id();
         let device2_id = device2.id();
@@ -356,7 +350,109 @@ mod tests {
             (unknown_device_id, GREEN_SIGNAL_LEVEL)
         ]);
         
-        // `unknown_device_id` must be skipped.
+        device_map.set_rx_signal_levels(
+            &new_rx_signal_levels, 
+            frequency1
+        );
+
+        let device1_ref = device_map
+            .get(&device1_id)
+            .expect("Missing device");
+        let device2_ref = device_map
+            .get(&device2_id)
+            .expect("Missing device");
+
+        assert!(
+            device1_ref
+                .rx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            device1_ref
+                .rx_signal_level(frequency2)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .rx_signal_level(frequency1)
+                .is_red()
+        );
+        assert!(
+            device2_ref
+                .rx_signal_level(frequency2)
+                .is_green()
+        );
+    }
+
+    #[test]
+    fn ignore_setting_rx_signal_levels_on_unknown_frequency() {
+        let frequency1 = 500;
+        let frequency2 = 1_500;
+        let unknown_frequency = 2_000;
+
+        let rx_module = TRXModule::build(
+            HashMap::from([
+                (frequency1, GREEN_SIGNAL_LEVEL),
+                (frequency2, GREEN_SIGNAL_LEVEL),
+            ]),
+            HashMap::from([
+                (frequency1, GREEN_SIGNAL_LEVEL),
+                (frequency2, GREEN_SIGNAL_LEVEL),
+            ]),
+        ).unwrap_or_else(|error| panic!("{}", error));
+        let trx_system = TRXSystem::Strength { 
+            tx_module: TRXModule::default(), 
+            rx_module 
+        };
+        
+        let device1 = DeviceBuilder::new()
+            .set_trx_system(trx_system.clone())
+            .build();
+           
+        let device2 = DeviceBuilder::new()
+            .set_trx_system(trx_system)
+            .build();
+           
+        
+        let device1_id = device1.id();
+        let device2_id = device2.id();
+
+        let mut device_map = IdToDeviceMap::from([device1, device2]);
+
+        assert_eq!(device_map.len(), 2);
+
+        let device1_ref = device_map
+            .get(&device1_id)
+            .expect("Missing device");
+        let device2_ref = device_map
+            .get(&device2_id)
+            .expect("Missing device");
+
+        assert!(
+            device1_ref
+                .rx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            device1_ref
+                .rx_signal_level(frequency2)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .rx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .rx_signal_level(frequency2)
+                .is_green()
+        );
+
+        let new_rx_signal_levels = HashMap::from([
+            (device2_id, RED_SIGNAL_LEVEL),
+        ]);
+        
         device_map.set_rx_signal_levels(
             &new_rx_signal_levels, 
             unknown_frequency
@@ -390,45 +486,44 @@ mod tests {
                 .rx_signal_level(frequency2)
                 .is_green()
         );
+    }
 
-        device_map.set_rx_signal_levels(&new_rx_signal_levels, frequency2);
+    #[test]
+    fn skip_absent_device_ids_on_setting_tx_signal_levels() {
+        let frequency1 = 500;
+        let frequency2 = 1_500;
 
-        let device1_ref = device_map
-            .get(&device1_id)
-            .expect("Missing device");
-        let device2_ref = device_map
-            .get(&device2_id)
-            .expect("Missing device");
-
-        // Only the rx signal level of `device2` on `frequency2` must be 
-        // changed.
-        assert!(
-            device1_ref
-                .rx_signal_level(frequency1)
-                .is_green()
-        );
-        assert!(
-            device1_ref
-                .rx_signal_level(frequency2)
-                .is_green()
-        );
-        assert!(
-            device2_ref
-                .rx_signal_level(frequency1)
-                .is_green()
-        );
-        assert!(
-            device2_ref
-                .rx_signal_level(frequency2)
-                .is_red()
-        );
+        let tx_module = TRXModule::build(
+            HashMap::from([
+                (frequency1, GREEN_SIGNAL_LEVEL),
+                (frequency2, GREEN_SIGNAL_LEVEL),
+            ]),
+            HashMap::from([
+                (frequency1, GREEN_SIGNAL_LEVEL),
+                (frequency2, GREEN_SIGNAL_LEVEL),
+            ]),
+        ).unwrap_or_else(|error| panic!("{}", error));
+        let trx_system = TRXSystem::Strength { 
+            tx_module, 
+            rx_module: TRXModule::default(), 
+        };
         
-        let new_tx_signal_levels = HashMap::from([
-            (device1_id, RED_SIGNAL_LEVEL),
-            (device2_id, RED_SIGNAL_LEVEL)
-        ]);
+        let device1 = DeviceBuilder::new()
+            .set_trx_system(trx_system.clone())
+            .build();
+           
+        let device2 = DeviceBuilder::new()
+            .set_trx_system(trx_system)
+            .build();
+           
+        
+        let device1_id = device1.id();
+        let device2_id = device2.id();
+        let unknown_device_id = device1_id + device2_id;
 
-        device_map.set_tx_signal_levels(&new_tx_signal_levels, frequency1);
+        let mut device_map = IdToDeviceMap::from([device1, device2]);
+
+        assert_eq!(device_map.len(), 2);
 
         let device1_ref = device_map
             .get(&device1_id)
@@ -440,7 +535,45 @@ mod tests {
         assert!(
             device1_ref
                 .tx_signal_level(frequency1)
-                .is_red()
+                .is_green()
+        );
+        assert!(
+            device1_ref
+                .tx_signal_level(frequency2)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .tx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .tx_signal_level(frequency2)
+                .is_green()
+        );
+
+        let new_tx_signal_levels = HashMap::from([
+            (device2_id, RED_SIGNAL_LEVEL),
+            (unknown_device_id, GREEN_SIGNAL_LEVEL)
+        ]);
+        
+        device_map.set_tx_signal_levels(
+            &new_tx_signal_levels, 
+            frequency1
+        );
+
+        let device1_ref = device_map
+            .get(&device1_id)
+            .expect("Missing device");
+        let device2_ref = device_map
+            .get(&device2_id)
+            .expect("Missing device");
+
+        assert!(
+            device1_ref
+                .tx_signal_level(frequency1)
+                .is_green()
         );
         assert!(
             device1_ref
@@ -460,12 +593,12 @@ mod tests {
     }
 
     #[test]
-    fn all_drones_receive_signal_level() {
+    fn ignore_setting_tx_signal_levels_on_unknown_frequency() {
         let frequency1 = 500;
         let frequency2 = 1_500;
         let unknown_frequency = 2_000;
 
-        let trx_module = TRXModule::build(
+        let tx_module = TRXModule::build(
             HashMap::from([
                 (frequency1, GREEN_SIGNAL_LEVEL),
                 (frequency2, GREEN_SIGNAL_LEVEL),
@@ -476,18 +609,121 @@ mod tests {
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
         let trx_system = TRXSystem::Strength { 
-            tx_module: trx_module.clone(), 
-            rx_module: trx_module 
+            tx_module, 
+            rx_module: TRXModule::default(), 
+        };
+        
+        let device1 = DeviceBuilder::new()
+            .set_trx_system(trx_system.clone())
+            .build();
+           
+        let device2 = DeviceBuilder::new()
+            .set_trx_system(trx_system)
+            .build();
+           
+        
+        let device1_id = device1.id();
+        let device2_id = device2.id();
+
+        let mut device_map = IdToDeviceMap::from([device1, device2]);
+
+        assert_eq!(device_map.len(), 2);
+
+        let device1_ref = device_map
+            .get(&device1_id)
+            .expect("Missing device");
+        let device2_ref = device_map
+            .get(&device2_id)
+            .expect("Missing device");
+
+        assert!(
+            device1_ref
+                .tx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            device1_ref
+                .tx_signal_level(frequency2)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .tx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .tx_signal_level(frequency2)
+                .is_green()
+        );
+
+        let new_tx_signal_levels = HashMap::from([
+            (device2_id, RED_SIGNAL_LEVEL),
+        ]);
+        
+        device_map.set_tx_signal_levels(
+            &new_tx_signal_levels, 
+            unknown_frequency
+        );
+
+        let device1_ref = device_map
+            .get(&device1_id)
+            .expect("Missing device");
+        let device2_ref = device_map
+            .get(&device2_id)
+            .expect("Missing device");
+
+        // No changes must happen.
+        assert!(
+            device1_ref
+                .tx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            device1_ref
+                .tx_signal_level(frequency2)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .tx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            device2_ref
+                .tx_signal_level(frequency2)
+                .is_green()
+        );
+    }
+
+    #[test]
+    fn skip_absent_device_ids_on_receiving_signal_levels() {
+        let frequency1 = 500;
+        let frequency2 = 1_500;
+
+        let rx_module = TRXModule::build(
+            HashMap::from([
+                (frequency1, GREEN_SIGNAL_LEVEL),
+                (frequency2, GREEN_SIGNAL_LEVEL),
+            ]),
+            HashMap::from([
+                (frequency1, GREEN_SIGNAL_LEVEL),
+                (frequency2, GREEN_SIGNAL_LEVEL),
+            ]),
+        ).unwrap_or_else(|error| panic!("{}", error));
+        let trx_system = TRXSystem::Strength { 
+            tx_module: TRXModule::default(), 
+            rx_module 
         };
         
         let rx_device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
         let rx_device2 = DeviceBuilder::new()
             .set_trx_system(trx_system)
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
         
         let rx_device1_id = rx_device1.id();
         let rx_device2_id = rx_device2.id();
@@ -530,40 +766,6 @@ mod tests {
             (unknown_rx_device_id, GREEN_SIGNAL_LEVEL)
         ]);
 
-        device_map.all_receive_signal_levels(
-            &signal_levels_to_receive, 
-            unknown_frequency
-        );
-
-        let rx_device1_ref = device_map
-            .get(&rx_device1_id)
-            .expect("Missing rx_device");
-        let rx_device2_ref = device_map
-            .get(&rx_device2_id)
-            .expect("Missing rx_device");
-
-        // No changes must happen.
-        assert!(
-            rx_device1_ref
-                .rx_signal_level(frequency1)
-                .is_green()
-        );
-        assert!(
-            rx_device1_ref
-                .rx_signal_level(frequency2)
-                .is_green()
-        );
-        assert!(
-            rx_device2_ref
-                .rx_signal_level(frequency1)
-                .is_green()
-        );
-        assert!(
-            rx_device2_ref
-                .rx_signal_level(frequency2)
-                .is_green()
-        );
-
         let initial_rx_device2_signal_level = rx_device2_ref
             .rx_signal_level(frequency1)
             .clone();
@@ -604,6 +806,111 @@ mod tests {
         );
     }
 
+    // TODO finish
+    #[test]
+    fn ignore_receiving_signal_levels_on_unknown_frequency() {
+        let frequency1 = 500;
+        let frequency2 = 1_500;
+        let unknown_frequency = 2_000;
+
+        let rx_module = TRXModule::build(
+            HashMap::from([
+                (frequency1, GREEN_SIGNAL_LEVEL),
+                (frequency2, GREEN_SIGNAL_LEVEL),
+            ]),
+            HashMap::from([
+                (frequency1, GREEN_SIGNAL_LEVEL),
+                (frequency2, GREEN_SIGNAL_LEVEL),
+            ]),
+        ).unwrap_or_else(|error| panic!("{}", error));
+        let trx_system = TRXSystem::Strength { 
+            tx_module: TRXModule::default(), 
+            rx_module 
+        };
+        
+        let rx_device1 = DeviceBuilder::new()
+            .set_trx_system(trx_system.clone())
+            .build();
+           
+        let rx_device2 = DeviceBuilder::new()
+            .set_trx_system(trx_system)
+            .build();
+           
+        
+        let rx_device1_id = rx_device1.id();
+        let rx_device2_id = rx_device2.id();
+
+        let mut device_map = IdToDeviceMap::from([rx_device1, rx_device2]);
+
+        assert_eq!(device_map.len(), 2);
+
+        let rx_device1_ref = device_map
+            .get(&rx_device1_id)
+            .expect("Missing device");
+        let rx_device2_ref = device_map
+            .get(&rx_device2_id)
+            .expect("Missing device");
+
+        assert!(
+            rx_device1_ref
+                .rx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            rx_device1_ref
+                .rx_signal_level(frequency2)
+                .is_green()
+        );
+        assert!(
+            rx_device2_ref
+                .rx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            rx_device2_ref
+                .rx_signal_level(frequency2)
+                .is_green()
+        );
+
+        let signal_levels_to_receive = HashMap::from([
+            (rx_device2_id, RED_SIGNAL_LEVEL),
+        ]);
+
+        device_map.all_receive_signal_levels(
+            &signal_levels_to_receive, 
+            unknown_frequency
+        );
+
+        let rx_device1_ref = device_map
+            .get(&rx_device1_id)
+            .expect("Missing rx_device");
+        let rx_device2_ref = device_map
+            .get(&rx_device2_id)
+            .expect("Missing rx_device");
+
+        // No changes must happen.
+        assert!(
+            rx_device1_ref
+                .rx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            rx_device1_ref
+                .rx_signal_level(frequency2)
+                .is_green()
+        );
+        assert!(
+            rx_device2_ref
+                .rx_signal_level(frequency1)
+                .is_green()
+        );
+        assert!(
+            rx_device2_ref
+                .rx_signal_level(frequency2)
+                .is_green()
+        );
+    }
+
     #[test]
     fn clearing_rx_signal_levels() {
         let frequency1 = 500;
@@ -626,12 +933,12 @@ mod tests {
 
         let device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
         let device2 = DeviceBuilder::new()
             .set_trx_system(trx_system)
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
 
         let device1_id = device1.id();
         let device2_id = device2.id();
@@ -719,12 +1026,12 @@ mod tests {
 
         let command_device = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
         let regular_device = DeviceBuilder::new()
             .set_trx_system(trx_system)
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
+           
 
         let command_device_id = command_device.id();
         let regular_device_id = regular_device.id();

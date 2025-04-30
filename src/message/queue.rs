@@ -1,5 +1,6 @@
+use crate::device::connections::DelaySnapshot;
 use crate::mathphysics::Megahertz;
-use crate::message::{DelaySnapshot, Message};
+use crate::message::Message;
 
 
 #[derive(Clone, Debug, Default)]

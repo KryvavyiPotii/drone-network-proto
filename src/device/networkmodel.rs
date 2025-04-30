@@ -2,18 +2,18 @@ use std::collections::hash_map::Values;
 
 use thiserror::Error;
 
-use crate::device::{Device, DeviceId, IdToDeviceMap};
+use crate::device::{
+    ConnectionGraph, Device, DeviceId, IdToDeviceMap, IdToGoalMap, UNKNOWN_ID
+};
 use crate::device::connections::Topology;
 use crate::infection::INFECTION_DELAY;
-use crate::mathphysics::{Megahertz, Point3D};
-use crate::message::{Message, MessageQueue};
+use crate::mathphysics::{Megahertz, Millisecond, Point3D, Position};
+use crate::message::{Message, MessageType, MessageQueue};
 use crate::signal::{GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL};
 
 
 pub use cellularautomaton::CellularAutomaton;
 pub use complexnetwork::ComplexNetwork;
-
-use super::{ConnectionGraph, IdToGoalMap};
 
 
 pub mod cellularautomaton;
@@ -50,6 +50,36 @@ fn multiply_infection_messages(
     }
 }
 
+fn try_multiply_infection_message_from_receivers(
+    message: &Message,
+    frequency: Megahertz,
+    receiver_ids: &[DeviceId],
+    device_map: &IdToDeviceMap,
+    connections: &ConnectionGraph,
+    infection_messages: &mut Vec<(Megahertz, Message)>
+) {
+    let MessageType::Infection(infection_type) = message.message_type() else {
+        return;
+    };
+
+    for receiver_id in receiver_ids {
+        let Some(receiver) = device_map.get(receiver_id) else {
+            continue;
+        };
+        if !receiver.is_infected_with(infection_type) {
+            continue;
+        }
+
+        multiply_infection_messages(
+            message, 
+            frequency, 
+            *receiver_id,
+            connections, 
+            infection_messages
+        );
+    }
+}
+
 fn enqueue_infection_messages(
     infection_messages: &Vec<(Megahertz, Message)>,
     message_queue: &mut MessageQueue,
@@ -82,6 +112,25 @@ fn connect_gps_to_all_devices(device_map: &mut IdToDeviceMap) {
     );
 }
 
+// TODO use separate GPS transmitters
+fn send_gps_messages(
+    device_map: &IdToDeviceMap,
+    message_queue: &mut MessageQueue,
+    current_time: Millisecond
+) {
+    for (device_id, device) in device_map {
+        let gps_position = device.position();
+        let gps_message = Message::new(
+            UNKNOWN_ID, 
+            *device_id,
+            current_time, 
+            MessageType::GPS(*gps_position)
+        );
+
+        message_queue.add_message(GPS_L1_FREQUENCY, gps_message);
+    }
+}
+
 
 #[derive(Clone)]
 pub enum NetworkModel {
@@ -94,7 +143,7 @@ impl NetworkModel {
     pub fn complex_network(&self) -> Option<&ComplexNetwork> {
         match self {
             Self::ComplexNetwork(complex_network) => Some(complex_network),
-            Self::CellularAutomaton(_) => None
+            Self::CellularAutomaton(_)            => None
         }
     }
     
@@ -102,7 +151,7 @@ impl NetworkModel {
     pub fn complex_network_mut(&mut self) -> Option<&mut ComplexNetwork> {
         match self {
             Self::ComplexNetwork(complex_network) => Some(complex_network),
-            Self::CellularAutomaton(_) => None
+            Self::CellularAutomaton(_)            => None
         }
     }
 
@@ -111,7 +160,8 @@ impl NetworkModel {
         match self {
             Self::CellularAutomaton(cellular_automaton) => 
                 Some(cellular_automaton),
-            Self::ComplexNetwork(_) => None
+            Self::ComplexNetwork(_)                     => 
+                None
         }
     }
     
@@ -120,7 +170,8 @@ impl NetworkModel {
         match self {
             Self::CellularAutomaton(cellular_automaton) => 
                 Some(cellular_automaton),
-            Self::ComplexNetwork(_) => None
+            Self::ComplexNetwork(_)                     => 
+                None
         }
     }
 
@@ -128,7 +179,7 @@ impl NetworkModel {
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
                 cellular_automaton.update(),
-            Self::ComplexNetwork(complex_network) =>
+            Self::ComplexNetwork(complex_network)       =>
                 complex_network.update()
         }
     }
@@ -138,7 +189,7 @@ impl NetworkModel {
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
                 cellular_automaton.goals(),
-            Self::ComplexNetwork(complex_network) =>
+            Self::ComplexNetwork(complex_network)       =>
                 complex_network.goals()
         }
     }
@@ -148,7 +199,7 @@ impl NetworkModel {
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
                 cellular_automaton.command_device(),
-            Self::ComplexNetwork(complex_network) =>
+            Self::ComplexNetwork(complex_network)       =>
                 complex_network.command_device()
         }
     }
@@ -158,7 +209,7 @@ impl NetworkModel {
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
                 cellular_automaton.device_iter(),
-            Self::ComplexNetwork(complex_network) =>
+            Self::ComplexNetwork(complex_network)       =>
                 complex_network.device_iter()
         }
     }
@@ -168,7 +219,7 @@ impl NetworkModel {
         match self {
             Self::CellularAutomaton(cellular_automaton) =>
                 cellular_automaton.device_count(),
-            Self::ComplexNetwork(complex_network) =>
+            Self::ComplexNetwork(complex_network)       =>
                 complex_network.device_count()
         }
     }
@@ -178,7 +229,7 @@ impl NetworkModel {
         match self {
             Self::CellularAutomaton(cellular_automaton) => 
                 cellular_automaton.ewds(),
-            Self::ComplexNetwork(complex_network) => 
+            Self::ComplexNetwork(complex_network)       => 
                 complex_network.ewds()
         }
     }
@@ -357,7 +408,7 @@ mod tests {
    
     fn drone_with_trx_system_set(position: Point3D) -> Device {
         DeviceBuilder::new()
-            .set_global_position(position)
+            .set_real_position(position)
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(),
@@ -365,7 +416,6 @@ mod tests {
                 }
             )
             .build()
-            .unwrap_or_else(|error| panic!("{}", error))
     }
 
     fn assert_all_messages_are_infections(
@@ -405,8 +455,7 @@ mod tests {
                     rx_module: TRXModule::default() 
                 }
             )
-            .build()
-            .unwrap_or_else(|error| panic!("{}", error));
+            .build();
         let command_center_id = command_center.id();
         
         // Network topology:
@@ -444,7 +493,7 @@ mod tests {
             command_center_id,
             drone1_id,
             0, 
-            MessageType::Infection(InfectionType::Jamming)
+            MessageType::Infection(InfectionType::Jamming(frequency))
         );
         let mut infection_messages = Vec::new();
 
@@ -480,7 +529,7 @@ mod tests {
             command_center_id,
             drone2_id,
             0, 
-            MessageType::Infection(InfectionType::Jamming)
+            MessageType::Infection(InfectionType::Jamming(frequency))
         );
 
         multiply_infection_messages(

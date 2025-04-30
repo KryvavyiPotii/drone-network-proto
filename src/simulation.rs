@@ -93,7 +93,7 @@ impl<'a> Simulation<'a> {
                 .for_each(NetworkModel::update);
             
             self.renderer
-                .draw_network_models(&self.network_models)
+                .render(&self.network_models)
                 .unwrap();
                         
             trace!(
