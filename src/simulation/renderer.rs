@@ -10,7 +10,7 @@ use crate::signal::{
     SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
 };
 use crate::device::{Device, DESTINATION_RADIUS, STEP_DURATION};
-use crate::device::networkmodel::NetworkModel;
+use crate::device::networkmodel::{AttackerDevice, NetworkModel};
 use crate::mathphysics::{Megahertz, Meter, Point3D, Position};
 use crate::message::Goal;
 
@@ -108,24 +108,24 @@ fn device_primitive(
     Circle::new(point, size, style)
 }
 
-fn ewd_primitive(
-    ewd: &Device,
+fn attacker_device_primitive(
+    attacker_device: &Device,
     frequency: Megahertz,
     screen_height: u16
 ) -> PlottersCircle {
-    let radius = ewd
+    let radius = attacker_device
         .area(frequency)
         .radius();
 
-    let point = plotters_point_from_point3d(ewd.position());
-    let ewd_coverage = meters_to_pixels(radius, screen_height);
+    let point = plotters_point_from_point3d(attacker_device.position());
+    let attacker_device_coverage = meters_to_pixels(radius, screen_height);
     let area_color = match frequency {
         GPS_L1_FREQUENCY | GPS_L2_FREQUENCY => RED,
         WIFI_2_4GHZ_FREQUENCY               => BLUE,
         _ => GREY
     };
 
-    Circle::new(point, ewd_coverage, area_color)
+    Circle::new(point, attacker_device_coverage, area_color)
 }
 
 fn plotters_point_from_point3d(point: &Point3D) -> (f64, f64, f64) {
@@ -317,9 +317,17 @@ impl<'a> PlottersRenderer<'a> {
     }
     
     fn chart_context(&self) -> PlottersChartContext<'a> {
-        let mut chart = ChartBuilder::on(&self.area)
+        let mut chart_builder = ChartBuilder::on(&self.area);
+
+        if !self.caption.is_empty() {
+            chart_builder.caption(
+                &self.caption, 
+                ("sans-serif", u32::from(self.font_size))
+            );
+        }
+
+        let mut chart = chart_builder
             .margin(PLOT_MARGIN)
-            .caption(&self.caption, ("sans-serif", u32::from(self.font_size)))
             .build_cartesian_3d(
                 self.axes_ranges.x.clone(),
                 self.axes_ranges.y.clone(),
@@ -347,7 +355,10 @@ impl<'a> PlottersRenderer<'a> {
         self.draw_command_devices(network_models, chart_context);
         self.draw_devices(network_models, chart_context);
         for network_model in network_models {
-            self.draw_ewds(network_model.ewds(), chart_context);
+            self.draw_attacker_devices(
+                network_model.attacker_devices(), 
+                chart_context
+            );
         }
     }
 
@@ -421,35 +432,36 @@ impl<'a> PlottersRenderer<'a> {
         }
     }
 
-    fn draw_ewds(
+    // TODO handle GPS Spoofing
+    fn draw_attacker_devices(
         &self, 
-        ewds: &[Device],
+        attacker_devices: &[AttackerDevice],
         chart_context: &mut PlottersChartContext<'a>
     ) {
-        let control_ewd_primitives = ewds
+        let control_attacker_device_primitives = attacker_devices
             .iter()
-            .map(|ewd| {
-                ewd_primitive(
-                    ewd, 
+            .map(|attacker_device| {
+                attacker_device_primitive(
+                    attacker_device.device(), 
                     WIFI_2_4GHZ_FREQUENCY, 
                     self.screen_resolution.1
                 )
             });
-        let gps_ewd_primitives = ewds
+        let gps_attacker_device_primitives = attacker_devices
             .iter()
-            .map(|ewd| {
-                ewd_primitive(
-                    ewd, 
+            .map(|attacker_device| {
+                attacker_device_primitive(
+                    attacker_device.device(), 
                     GPS_L1_FREQUENCY, 
                     self.screen_resolution.1
                 )
             });
 
         chart_context
-            .draw_series(control_ewd_primitives)
+            .draw_series(control_attacker_device_primitives)
             .expect("Failed to draw control EWDs");
         chart_context
-            .draw_series(gps_ewd_primitives)
+            .draw_series(gps_attacker_device_primitives)
             .expect("Failed to draw GPS EWDs");
     }
 }

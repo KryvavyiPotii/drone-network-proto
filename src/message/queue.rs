@@ -1,3 +1,5 @@
+use std::slice::{Iter, IterMut};
+
 use crate::device::connections::DelaySnapshot;
 use crate::mathphysics::Megahertz;
 use crate::message::Message;
@@ -23,14 +25,14 @@ impl MessageQueue {
     }
     
     pub fn iter(
-        &mut self
-    ) -> std::slice::Iter<'_, (Megahertz, Message, DelaySnapshot)> {
+        &self
+    ) -> Iter<'_, (Megahertz, Message, DelaySnapshot)> {
         self.0.iter()
     }
     
     pub fn iter_mut(
         &mut self
-    ) -> std::slice::IterMut<'_, (Megahertz, Message, DelaySnapshot)> {
+    ) -> IterMut<'_, (Megahertz, Message, DelaySnapshot)> {
         self.0.iter_mut()
     }
    
@@ -44,12 +46,18 @@ impl MessageQueue {
     }
 }
 
+impl<'a> IntoIterator for &'a MessageQueue{
+    type Item = &'a (Megahertz, Message, DelaySnapshot);
+    type IntoIter = Iter<'a, (Megahertz, Message, DelaySnapshot)>;
+    
+    fn into_iter(self) -> Self::IntoIter {
+         self.iter()
+    }
+}
+
 impl<'a> IntoIterator for &'a mut MessageQueue{
     type Item = &'a mut (Megahertz, Message, DelaySnapshot);
-    type IntoIter = std::slice::IterMut<
-        'a, 
-        (Megahertz, Message, DelaySnapshot)
-    >;
+    type IntoIter = IterMut<'a, (Megahertz, Message, DelaySnapshot)>;
     
     fn into_iter(self) -> Self::IntoIter {
          self.iter_mut()
@@ -153,7 +161,7 @@ mod tests {
     fn sort_messages_on_creation() {
         let messages = message_vec();
 
-        let mut message_queue = MessageQueue::from(messages.as_slice());
+        let message_queue = MessageQueue::from(messages.as_slice());
         let mut queue_iter = message_queue.into_iter();
 
         assert_eq!(

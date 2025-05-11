@@ -5,8 +5,9 @@ use crate::device::{
     IdToDeviceMap, IdToGoalMap, IdToLevelMap, STEP_DURATION, Topology, 
 };
 use crate::device::networkmodel::{
-    send_gps_messages, connect_gps_to_all_devices, 
-    enqueue_infection_messages, try_multiply_infection_message_from_receivers
+    AttackerDevice, AttackType, connect_gps_to_all_devices, 
+    enqueue_infection_messages, process_gps_spoofing, send_gps_messages, 
+    try_multiply_infection_message_from_receivers
 };
 use crate::mathphysics::{Megahertz, Millisecond};
 use crate::message::{Message, MessagePreprocessError, MessageQueue};
@@ -87,6 +88,33 @@ fn broadcast_message_and_handle_infection(
     receiver_ids
 }
 
+fn process_attack(
+    device_map: &mut IdToDeviceMap,
+    message_queue: &mut MessageQueue,
+    attacker_device: &AttackerDevice, 
+    current_time: Millisecond
+) {
+    match attacker_device.attack_type() {
+        AttackType::ElectronicWarfare => 
+            process_electronic_warfare(device_map, attacker_device.device()),
+        AttackType::GPSSpoofing(spoofed_position) => 
+            process_gps_spoofing(
+                device_map, 
+                message_queue, 
+                attacker_device.device(),
+                &spoofed_position,
+                current_time
+            )
+    }
+}
+
+fn process_electronic_warfare(device_map: &mut IdToDeviceMap, ewd: &Device) {
+    for device in device_map.devices_mut() {
+        suppress_with_probability(ewd, device, WIFI_2_4GHZ_FREQUENCY);
+        suppress_with_probability(ewd, device, GPS_L1_FREQUENCY);
+    }
+}
+
 fn suppress_with_probability(
     tx: &Device,
     rx: &mut Device,
@@ -147,7 +175,7 @@ pub struct CellularAutomaton {
     current_time: Millisecond,
     command_device_id: DeviceId,
     device_map: IdToDeviceMap,
-    electronic_warfare_devices: Vec<Device>,
+    attacker_devices: Vec<AttackerDevice>,
     topology: Topology,
     connections: ConnectionGraph,
     message_queue: MessageQueue,
@@ -158,7 +186,7 @@ impl CellularAutomaton {
     pub fn new(
         command_device_id: DeviceId,
         device_map: IdToDeviceMap,
-        electronic_warfare_devices: Vec<Device>,
+        attacker_devices: Vec<AttackerDevice>,
         scenario: &[(Megahertz, Message)],
         topology: Topology,
     ) -> Self {
@@ -166,7 +194,7 @@ impl CellularAutomaton {
             current_time: 0,
             command_device_id,
             device_map,
-            electronic_warfare_devices,
+            attacker_devices,
             topology,
             connections: ConnectionGraph::new(),
             message_queue: MessageQueue::from(scenario),
@@ -208,8 +236,8 @@ impl CellularAutomaton {
     }
 
     #[must_use]
-    pub fn ewds(&self) -> &[Device] {
-        self.electronic_warfare_devices.as_slice()
+    pub fn attacker_devices(&self) -> &[AttackerDevice] {
+        self.attacker_devices.as_slice()
     }   
 
     #[must_use]
@@ -220,30 +248,20 @@ impl CellularAutomaton {
     fn set_initial_state(&mut self) {
         self.update_connections_graph();
         self.update_signal_levels();
-        self.device_map.remove_not_receiving_devices(
-            &self.command_device_id,
-            WIFI_2_4GHZ_FREQUENCY
-        );
+        self.remove_disconnected_devices();
         connect_gps_to_all_devices(&mut self.device_map);
-        send_gps_messages(
-            &self.device_map, 
-            &mut self.message_queue, 
-            self.current_time
-        );
+        self.send_gps_messages();
+        self.process_message_queue();
     }
      
     pub fn update(&mut self) {
         self.update_connections_graph();
         self.update_signal_levels();
-        self.suppress_network();
+        self.process_attacks();
         self.remove_disconnected_devices();
         self.process_message_queue();
         self.device_map.update_states(); 
-        send_gps_messages(
-            &self.device_map, 
-            &mut self.message_queue, 
-            self.current_time
-        );
+        self.send_gps_messages();
         connect_gps_to_all_devices(&mut self.device_map);
       
         self.current_time += STEP_DURATION;
@@ -315,13 +333,23 @@ impl CellularAutomaton {
         );
     }
 
-    fn suppress_network(&mut self) {
-        for ewd in &self.electronic_warfare_devices {
-            for device in self.device_map.devices_mut() {
-                suppress_with_probability(ewd, device, WIFI_2_4GHZ_FREQUENCY);
-                suppress_with_probability(ewd, device, GPS_L1_FREQUENCY);
-            }
+    fn process_attacks(&mut self) {
+        for attacker_device in &self.attacker_devices {
+            process_attack(
+                &mut self.device_map, 
+                &mut self.message_queue, 
+                attacker_device,
+                self.current_time
+            ); 
         }
+    }
+
+    fn send_gps_messages(&mut self) {
+        send_gps_messages(
+            &self.device_map, 
+            &mut self.message_queue, 
+            self.current_time
+        );
     }
     
     fn remove_disconnected_devices(&mut self) {
@@ -356,9 +384,9 @@ mod tests {
     use std::collections::HashMap;
     
     use crate::device::DeviceBuilder;
-    use crate::device::systems::{TRXModule, TRXSystem};
+    use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
     use crate::infection::{InfectionType, INFECTION_DELAY};
-    use crate::mathphysics::{Meter, Point3D};
+    use crate::mathphysics::{Meter, Point3D, PowerUnit};
     use crate::message::MessageType;
     use crate::signal::{
         GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE,
@@ -371,7 +399,13 @@ mod tests {
     const SOME_FREQUENCY: Megahertz      = 5_000;
     const DRONE_TX_CONTROL_RADIUS: Meter = 30.0;
     const VERY_BIG_STRENGTH_VALUE: f32  = GREEN_SIGNAL_STRENGTH_VALUE * 1_000.0;
+    const DEVICE_MAX_POWER: PowerUnit    = 10_000;
 
+    
+    fn device_power_system() -> PowerSystem {
+        PowerSystem::build(DEVICE_MAX_POWER, DEVICE_MAX_POWER)
+            .unwrap_or_else(|error| panic!("{}", error))
+    }
 
     fn drone_tx_area() -> SignalArea {
         SignalArea::build(DRONE_TX_CONTROL_RADIUS)
@@ -413,6 +447,7 @@ mod tests {
             SignalLevel::from_area(drone_tx_area(), frequency)
         )]);
         let command_center = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Color(
                     TRXModule::build(max_cc_signal_level, cc_signal_level)
@@ -437,18 +472,22 @@ mod tests {
         let drones = [
             DeviceBuilder::new()
                 .set_real_position(Point3D::new(10.0, 0.0, 0.0))
+                .set_power_system(device_power_system())
                 .set_trx_system(drone_trx_system.clone())
                 .build(),
             DeviceBuilder::new()
                 .set_real_position(Point3D::new(20.0, 0.0, 0.0))
+                .set_power_system(device_power_system())
                 .set_trx_system(drone_trx_system.clone())
                 .build(),
             DeviceBuilder::new()
                 .set_real_position(Point3D::new(25.0, 0.0, 0.0))
+                .set_power_system(device_power_system())
                 .set_trx_system(drone_trx_system.clone())
                 .build(),
             DeviceBuilder::new()
                 .set_real_position(Point3D::new(35.0, 0.0, 0.0))
+                .set_power_system(device_power_system())
                 .set_trx_system(drone_trx_system)
                 .build(),
         ]; 
@@ -505,6 +544,7 @@ mod tests {
     #[test]
     fn spread_infection_in_star() {
         let vulnerable_device_builder = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_vulnerabilities(&[InfectionType::Indicator])
             .set_trx_system(TRXSystem::Color(drone_trx_module()));
         
@@ -626,6 +666,7 @@ mod tests {
     fn patched_devices_do_not_spread_infection() {
         let trx_system = TRXSystem::Color(drone_trx_module());
         let vulnerable_device_builder = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_vulnerabilities(&[InfectionType::Indicator])
             .set_trx_system(trx_system.clone());
         
@@ -634,6 +675,7 @@ mod tests {
         // B -(1.1)- A -(1.1)- C
         //
         let patched_command_center = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_trx_system(trx_system)
             .build();
            
@@ -750,6 +792,7 @@ mod tests {
     #[test]
     fn spread_infection_in_mesh() {
         let vulnerable_device_builder = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_vulnerabilities(&[InfectionType::Indicator])
             .set_trx_system(TRXSystem::Color(drone_trx_module()));
         

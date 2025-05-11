@@ -16,7 +16,6 @@ use crate::signal::{
 pub const GREEN_SIGNAL_STRENGTH_VALUE: f32           = 100.0;
 pub const NO_SIGNAL_STRENGTH: SignalStrength         = SignalStrength(0.0);
 pub const MAX_BLACK_SIGNAL_STRENGTH: SignalStrength  = SignalStrength(1.0);
-// TODO properly convert values
 pub const MAX_RED_SIGNAL_STRENGTH: SignalStrength    = SignalStrength(
     GREEN_SIGNAL_STRENGTH_VALUE * (1.0 - YELLOW_SIGNAL_ZONE_COEFFICIENT)
 );

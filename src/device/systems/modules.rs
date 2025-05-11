@@ -28,7 +28,7 @@ pub enum TRXModuleBuildError {
 
 
 // By default we create a non-functioning TRXModule.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TRXModule {
     max_signal_levels: FreqToLevelMap,
     signal_levels: FreqToLevelMap

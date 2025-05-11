@@ -32,7 +32,7 @@ const SET_GOAL_COST: MessageCost  = MessageCost(
 );
 
 
-fn define_message_execution_cost(message_type: &MessageType) -> MessageCost {
+fn define_message_transmission_cost(message_type: &MessageType) -> MessageCost {
     match message_type {
         MessageType::GPS(_)       => GPS_COST,
         // TODO add cost dependency on infection type
@@ -97,7 +97,7 @@ pub enum Goal {
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MessageType {
     GPS(Point3D),
     Infection(InfectionType),
@@ -105,7 +105,7 @@ pub enum MessageType {
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MessageState {
     Waiting,
     InProgress,
@@ -122,12 +122,12 @@ pub enum MessagePreprocessError {
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Message {
     source_id: DeviceId,
     destination_id: DeviceId,
     execution_time: Millisecond,
-    execution_cost: MessageCost,
+    transmission_cost: MessageCost,
     message_type: MessageType,
     message_state: MessageState
 }
@@ -144,7 +144,7 @@ impl Message {
             source_id,
             destination_id,
             execution_time,
-            execution_cost: define_message_execution_cost(&message_type),
+            transmission_cost: define_message_transmission_cost(&message_type),
             message_type,
             message_state: MessageState::Waiting,
         }
@@ -167,7 +167,7 @@ impl Message {
 
     #[must_use]
     pub fn cost(&self) -> MessageCost {
-        self.execution_cost
+        self.transmission_cost
     }
 
     #[must_use]

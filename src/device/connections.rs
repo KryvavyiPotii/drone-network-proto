@@ -13,8 +13,7 @@ use crate::device::{Device, DeviceId, STEP_DURATION};
 use crate::device::{IdToDeviceMap, IdToLevelMap};
 use crate::infection::{InfectionState, InfectionType};
 use crate::mathphysics::{
-    kmps_to_mpms, Megahertz, Meter, Millisecond, SPEED_OF_LIGHT, 
-    time_in_millis_from_distance_and_speed
+    kmps_to_mpms, time_in_millis_from_distance_and_speed, Megahertz, Meter, Millisecond, Position, SPEED_OF_LIGHT
 };
 
 
@@ -353,20 +352,16 @@ impl ConnectionGraph {
         let _ = commanded_device_map.remove(&command_device.id());
         
         for device in commanded_device_map.devices() {
-            if let Some(distance) = command_device.connection_distance(
-                device,
-                frequency
-            ) {
+            let distance = command_device.distance_to(device);
+
+            if command_device.transmits_at(distance, frequency) {
                 let node = self.0.add_node(device.id());
                 
                 self.0.add_edge(command_device_node, node, distance);
                 
                 connected = true;
             };
-            if let Some(distance) = device.connection_distance(
-                command_device,
-                frequency
-            ) {
+            if device.transmits_at(distance, frequency) {
                 let node = self.0.add_node(device.id());
                 
                 self.0.add_edge(node, command_device_node, distance);
@@ -387,18 +382,13 @@ impl ConnectionGraph {
             // Loops are prohibited. 
             // Otherwise, shortest path algorithms will not function properly.
             for rx_drone in device_map.devices().skip(i + 1) {
+                let distance = tx_drone.distance_to(rx_drone);
                 let rx_node = self.0.add_node(rx_drone.id());
         
-                if let Some(distance) = tx_drone.connection_distance(
-                    rx_drone,
-                    frequency
-                ) {
+                if tx_drone.transmits_at(distance, frequency) {
                     self.0.add_edge(tx_node, rx_node, distance);
                 }
-                if let Some(distance) = rx_drone.connection_distance(
-                    tx_drone,
-                    frequency
-                ) {
+                if rx_drone.transmits_at(distance, frequency) {
                     self.0.add_edge(rx_node, tx_node, distance);
                 }
             }
@@ -758,14 +748,14 @@ impl Default for ConnectionGraph {
 mod tests {
     use std::collections::HashMap;
 
+    use crate::device::{Device, DeviceBuilder, UNKNOWN_ID};
+    use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
+    use crate::mathphysics::{Point3D, PowerUnit};
     use crate::message::{Message, MessageType};
     use crate::signal::{
         GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, NO_SIGNAL_LEVEL, 
         SignalLevel, SignalArea, WIFI_2_4GHZ_FREQUENCY
     };
-    use crate::device::{Device, DeviceBuilder, UNKNOWN_ID};
-    use crate::device::systems::{TRXModule, TRXSystem};
-    use crate::mathphysics::Point3D;
     
     use super::*;
     
@@ -773,7 +763,13 @@ mod tests {
     const CC_TX_CONTROL_RADIUS: Meter    = 300.0;
     const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
     const VERY_BIG_STRENGTH_VALUE: f32   = GREEN_SIGNAL_STRENGTH_VALUE * 1000.0;
+    const DEVICE_MAX_POWER: PowerUnit    = 1_000;
+    
 
+    fn device_power_system() -> PowerSystem {
+        PowerSystem::build(DEVICE_MAX_POWER, DEVICE_MAX_POWER)
+            .unwrap_or_else(|error| panic!("{}", error))
+    }
 
     fn round_with_precision(value: f32, precision: u8) -> f32 {
         let coefficient = 10.0_f32.powi(precision.into());
@@ -846,6 +842,7 @@ mod tests {
         
         DeviceBuilder::new()
             .set_real_position(position)
+            .set_power_system(device_power_system())
             .set_trx_system(trx_system)
             .set_vulnerabilities(&vulnerabilities)
             .build()
@@ -866,6 +863,7 @@ mod tests {
         //                      E
         //
         let command_center = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(), 
@@ -904,6 +902,7 @@ mod tests {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
         
         let command_center = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: cc_tx_module(),
@@ -1062,6 +1061,7 @@ mod tests {
         //                      E
         //
         let command_center = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(), 
@@ -1158,6 +1158,7 @@ mod tests {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
 
         let command_center = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: cc_tx_module(),
@@ -1170,6 +1171,7 @@ mod tests {
         let distance = 50.0;
         let drone = DeviceBuilder::new()
             .set_real_position(Point3D::new(distance, 0.0, 0.0))
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: TRXModule::default(),
@@ -1210,6 +1212,7 @@ mod tests {
         
         // Network 1: full mesh with edge weight 1.0.
         let command_center = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(), 

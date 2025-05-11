@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-use crate::mathphysics::{Megahertz, Meter, MeterPerSecond, Point3D, Vector3D};
+use crate::mathphysics::{
+    Megahertz, Meter, MeterPerSecond, Point3D, PowerUnit, Vector3D
+};
 use crate::message::Message;
 use crate::signal::{
     BLACK_SIGNAL_LEVEL, FreqToLevelMap, NO_SIGNAL_LEVEL, SignalArea, SignalLevel
@@ -14,6 +16,12 @@ pub mod modules;
 
 
 #[derive(Error, Debug)]
+pub enum MovementSystemBuildError {
+    #[error("Maximum speed is negative")]
+    NegativeMaxSpeed
+}
+
+#[derive(Error, Debug)]
 pub enum ReceiveMessageError {
     #[error("Message execution cost is too high")]
     TooExpensive,
@@ -22,14 +30,74 @@ pub enum ReceiveMessageError {
 }
 
 #[derive(Error, Debug)]
-pub enum MovementSystemBuildError {
-    #[error("Maximum speed is negative")]
-    NegativeMaxSpeed
+pub enum PowerConsumptionError {
+    #[error("Provided power is greater than current power")]
+    NotEnoughPower,
+}
+
+#[derive(Error, Debug)]
+pub enum PowerSystemBuildError {
+    #[error("Power is greater than max power")]
+    PowerIsGreaterThanMax,
 }
 
 
-// By default system can not move, because its maximum speed is 0.0.
-#[derive(Clone, Debug, Default)]
+// By default the system can supply any power, because its maximum power is 0.0.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PowerSystem {
+    max_power: PowerUnit,
+    power: PowerUnit,
+}
+
+impl PowerSystem {
+    /// # Errors
+    ///
+    /// Will return `Err` if provided power is higher than provided max power.
+    pub fn build(
+        max_power: PowerUnit, 
+        power: PowerUnit
+    ) -> Result<Self, PowerSystemBuildError> {
+        if power > max_power {
+            return Err(PowerSystemBuildError::PowerIsGreaterThanMax);
+        }
+
+        Ok(Self { max_power, power })
+    }
+
+    #[must_use]
+    pub fn max_power(&self) -> PowerUnit {
+        self.max_power
+    }
+
+    #[must_use]
+    pub fn power(&self) -> PowerUnit {
+        self.power
+    }
+
+    pub fn set_power(&mut self, power: PowerUnit) {
+        self.power = self.max_power.min(power);
+    }
+
+    /// # Errors
+    ///
+    /// Will return `Err` if device does not have enough power.
+    pub fn try_consume_power(
+        &mut self, 
+        power_to_consume: PowerUnit
+    ) -> Result<(), PowerConsumptionError> {
+        let Some(power_left) = self.power.checked_sub(power_to_consume) else {
+            return Err(PowerConsumptionError::NotEnoughPower)
+        };
+
+        self.power = power_left;
+
+        Ok(())
+    }
+}
+
+
+// By default the system can not move, because its maximum speed is 0.0.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct MovementSystem {
     position_in_meters: Point3D,
     max_speed_in_mps: MeterPerSecond,
@@ -88,12 +156,12 @@ impl MovementSystem {
             destination
         );
         
-        self.velocity_in_mps.truncate(self.max_speed_in_mps);
+        self.velocity_in_mps.scale_to(self.max_speed_in_mps);
     }
 }
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TRXSystem {
     Color(TRXModule),
     Strength { tx_module: TRXModule, rx_module: TRXModule }
@@ -241,23 +309,19 @@ impl TRXSystem {
     }
 
     #[must_use]
-    pub fn connection_distance(
+    pub fn transmits_to(
         &self, 
         distance: Meter, 
         frequency: Megahertz
-    ) -> Option<Meter> {
+    ) -> bool {
         let tx_signal_level = self.tx_signal_level(frequency);
 
         // Optimization (if-statement is cheaper than calculating FSPL).
         if tx_signal_level.is_black() {
-            return None;
+            return false;
         }
 
-        if self.tx_signal_level_at(frequency, distance).is_black() {
-            None
-        } else {
-            Some(distance)
-        }
+        !self.tx_signal_level_at(frequency, distance).is_black()
     }
     
     #[must_use]
@@ -360,21 +424,21 @@ impl TRXSystem {
         frequency: Megahertz,
         message: &Message
     ) -> Result<(), ReceiveMessageError> {
-        match self {
-            Self::Color(_)                   => Ok(()),
-            Self::Strength { rx_module, .. } => {
-                let current_signal_level = rx_module.signal_level(frequency);
-                let new_signal_level = current_signal_level - message.cost();
-                
-                if new_signal_level < NO_SIGNAL_LEVEL {
-                    return Err(ReceiveMessageError::TooExpensive);
-                }
-
-                rx_module.set_signal_level(new_signal_level, frequency);
-
-                Ok(())
-            },
+        let rx_module = match self {
+            Self::Color(trx_module)          => trx_module,
+            Self::Strength { rx_module, .. } => rx_module
+        };
+    
+        let current_signal_level = rx_module.signal_level(frequency);
+        let new_signal_level = current_signal_level - message.cost();
+        
+        if new_signal_level < NO_SIGNAL_LEVEL {
+            return Err(ReceiveMessageError::TooExpensive);
         }
+
+        rx_module.set_signal_level(new_signal_level, frequency);
+
+        Ok(())
     }
 }
 
@@ -402,6 +466,50 @@ mod tests {
 
     use super::*;
 
+
+    #[test]
+    fn default_power_system_does_not_supply_power() {
+        let default_power_system = PowerSystem::default();
+
+        assert_eq!(default_power_system.max_power(), 0);
+    }
+
+    #[test]
+    fn building_power_system_with_power_greater_than_max_is_impossible() {
+        let max_power      = 50;
+        let too_high_power = max_power * 2;
+
+        let result = PowerSystem::build(max_power, too_high_power);
+
+        assert!(
+            matches!(result, Err(PowerSystemBuildError::PowerIsGreaterThanMax))
+        );
+    }
+
+    #[test]
+    fn setting_higher_power_than_max_is_impossible() {
+        let max_power = 50;
+        let power     = max_power / 2;
+
+        let mut power_system = PowerSystem::build(max_power, power)
+            .unwrap_or_else(|error| panic!("{}", error));
+
+        assert_eq!(power_system.max_power(), max_power);
+        assert_eq!(power_system.power(), power);
+
+        let too_high_power = max_power * 2;
+        
+        power_system.set_power(too_high_power);
+
+        assert_eq!(power_system.power(), max_power);
+    }
+    
+    #[test]
+    fn default_movement_system_is_immovable() {
+        let default_movement_system = MovementSystem::default();
+
+        assert_eq!(default_movement_system.max_speed(), 0.0);
+    }
 
     #[test]
     fn building_movement_system_with_negative_max_speed() {
@@ -563,32 +671,6 @@ mod tests {
     }
 
     #[test]
-    fn not_receive_too_expensive_message() {
-        let frequency = GPS_L1_FREQUENCY;
-        let message = Message::new(
-            UNKNOWN_ID,
-            BROADCAST_ID,
-            0, 
-            MessageType::SetGoal(Goal::Undefined)
-        );
-
-        let mut strength_rx_system = TRXSystem::Strength {
-            tx_module: TRXModule::default(),
-            rx_module: TRXModule::build(
-                    HashMap::from([(frequency, GREEN_SIGNAL_LEVEL)]),
-                    HashMap::new()
-                ).unwrap()
-            };
-
-        assert!(
-            matches!(
-                strength_rx_system.receive_message(frequency, &message),
-                Err(ReceiveMessageError::TooExpensive)
-            )
-        );
-    }
-
-    #[test]
     fn receive_message_on_color_trx_system() {
         let frequency = GPS_L1_FREQUENCY;
         let message = Message::new(
@@ -618,6 +700,42 @@ mod tests {
             color_rx_system
                 .rx_signal_level(frequency)
                 .is_yellow(),
+        );
+    }
+    
+    #[test]
+    fn not_receive_too_expensive_message() {
+        let frequency = GPS_L1_FREQUENCY;
+        let message = Message::new(
+            UNKNOWN_ID,
+            BROADCAST_ID,
+            0, 
+            MessageType::SetGoal(Goal::Undefined)
+        );
+        let rx_module = TRXModule::build(
+            HashMap::from([(frequency, GREEN_SIGNAL_LEVEL)]),
+            HashMap::new()
+        ).unwrap_or_else(|error| panic!("{}", error));
+
+        let mut strength_rx_system = TRXSystem::Strength {
+            tx_module: TRXModule::default(),
+            rx_module: rx_module.clone()
+        };
+
+        assert!(
+            matches!(
+                strength_rx_system.receive_message(frequency, &message),
+                Err(ReceiveMessageError::TooExpensive)
+            )
+        );
+
+        let mut color_rx_system = TRXSystem::Color(rx_module); 
+        
+        assert!(
+            matches!(
+                color_rx_system.receive_message(frequency, &message),
+                Err(ReceiveMessageError::TooExpensive)
+            )
         );
     }
 }

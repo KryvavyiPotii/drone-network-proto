@@ -9,7 +9,7 @@ use crate::device::connections::Topology;
 use crate::infection::INFECTION_DELAY;
 use crate::mathphysics::{Megahertz, Millisecond, Point3D, Position};
 use crate::message::{Message, MessageType, MessageQueue};
-use crate::signal::{GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL};
+use crate::signal::{GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, GREEN_SIGNAL_LEVEL};
 
 
 pub use cellularautomaton::CellularAutomaton;
@@ -112,13 +112,19 @@ fn connect_gps_to_all_devices(device_map: &mut IdToDeviceMap) {
     );
 }
 
-// TODO use separate GPS transmitters
 fn send_gps_messages(
     device_map: &IdToDeviceMap,
     message_queue: &mut MessageQueue,
     current_time: Millisecond
 ) {
     for (device_id, device) in device_map {
+        if message_queue_already_contains_gps_message_for(
+            message_queue, 
+            *device_id
+        ) {
+            continue; 
+        }
+
         let gps_position = device.position();
         let gps_message = Message::new(
             UNKNOWN_ID, 
@@ -128,6 +134,85 @@ fn send_gps_messages(
         );
 
         message_queue.add_message(GPS_L1_FREQUENCY, gps_message);
+    }
+}
+
+fn message_queue_already_contains_gps_message_for(
+    message_queue: &MessageQueue, 
+    device_id: DeviceId
+) -> bool {
+    /*dbg!(
+        &message_queue,
+    message_queue
+        .iter()
+        .any(|(_, message, _)| 
+            message.destination_id() == device_id 
+            && matches!(message.message_type(), MessageType::GPS(_))
+        )
+    );
+    */
+    message_queue
+        .iter()
+        .any(|(_, message, _)| 
+            message.destination_id() == device_id 
+            && matches!(message.message_type(), MessageType::GPS(_))
+        )
+}
+
+fn process_gps_spoofing(
+    device_map: &mut IdToDeviceMap,
+    message_queue: &mut MessageQueue,
+    spoofer: &Device,
+    spoofed_position: &Point3D,
+    current_time: Millisecond
+) {
+    for device in device_map.devices() {
+        if !spoofer.transmits_to(device, GPS_L1_FREQUENCY) 
+           && !spoofer.transmits_to(device, GPS_L2_FREQUENCY) 
+        {
+            continue;
+        }
+
+        let fake_gps_message = Message::new(
+            spoofer.id(), 
+            device.id(), 
+            // TODO add delay
+            current_time, 
+            MessageType::GPS(*spoofed_position)
+        );
+
+        message_queue.add_message(GPS_L1_FREQUENCY, fake_gps_message);
+    }
+}
+
+
+#[derive(Clone, Copy, Debug)]
+pub enum AttackType {
+    ElectronicWarfare,
+    GPSSpoofing(Point3D),
+}
+
+
+#[derive(Clone, Debug)]
+pub struct AttackerDevice {
+    device: Device,
+    attack_type: AttackType
+}
+
+impl AttackerDevice {
+    #[must_use]
+    pub fn new(device: Device, attack_type: AttackType) -> Self {
+        Self { device, attack_type }
+    }
+
+    #[must_use]
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+
+    #[must_use]
+    pub fn attack_type(&self) -> AttackType {
+        self.attack_type
     }
 }
 
@@ -225,12 +310,12 @@ impl NetworkModel {
     }
     
     #[must_use]
-    pub fn ewds(&self) -> &[Device] { 
+    pub fn attacker_devices(&self) -> &[AttackerDevice] { 
         match self {
             Self::CellularAutomaton(cellular_automaton) => 
-                cellular_automaton.ewds(),
+                cellular_automaton.attacker_devices(),
             Self::ComplexNetwork(complex_network)       => 
-                complex_network.ewds()
+                complex_network.attacker_devices()
         }
     }
 }
@@ -248,7 +333,7 @@ pub struct NetworkModelBuilder {
     network_model_type: NetworkModelType,
     command_center_id: Option<DeviceId>,
     devices: Option<Vec<Device>>,
-    electronic_warfare_devices: Option<Vec<Device>>,
+    attacker_devices: Option<Vec<AttackerDevice>>,
     destination_in_meters: Option<Point3D>,
     topology: Option<Topology>,
     scenario: Option<Vec<(Megahertz, Message)>>
@@ -261,7 +346,7 @@ impl NetworkModelBuilder {
             network_model_type,
             command_center_id: None,
             devices: None,
-            electronic_warfare_devices: None,
+            attacker_devices: None,
             destination_in_meters: None,
             topology: None,
             scenario: None
@@ -284,13 +369,11 @@ impl NetworkModelBuilder {
     }
 
     #[must_use]
-    pub fn set_electronic_warfare_devices(
+    pub fn set_attacker_devices(
         mut self, 
-        electronic_warfare_devices: &[Device]
+        attacker_devices: &[AttackerDevice]
     ) -> Self {
-        self.electronic_warfare_devices = Some(
-            electronic_warfare_devices.to_vec()
-        );
+        self.attacker_devices = Some(attacker_devices.to_vec());
         self
     }
 
@@ -325,7 +408,7 @@ impl NetworkModelBuilder {
                 let cellular_automaton = CellularAutomaton::new(
                     self.command_center_id.unwrap_or_default(),
                     device_map,
-                    self.electronic_warfare_devices.unwrap_or_default(),
+                    self.attacker_devices.unwrap_or_default(),
                     &self.scenario.unwrap_or_default(),
                     self.topology.unwrap_or_default(),
                 );
@@ -336,7 +419,7 @@ impl NetworkModelBuilder {
                 let complex_network = ComplexNetwork::new(
                     self.command_center_id.unwrap_or_default(),
                     device_map,
-                    self.electronic_warfare_devices.unwrap_or_default(),
+                    self.attacker_devices.unwrap_or_default(),
                     &self.scenario.unwrap_or_default(),
                     self.topology.unwrap_or_default(),
                     delay_multiplier
@@ -354,9 +437,9 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::device::{ConnectionGraph, DeviceBuilder, IdToDeviceMap};
-    use crate::device::systems::{TRXModule, TRXSystem};
+    use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
     use crate::infection::InfectionType;
-    use crate::mathphysics::Meter;
+    use crate::mathphysics::{Meter, PowerUnit};
     use crate::message::MessageType;
     use crate::signal::{
         GREEN_SIGNAL_STRENGTH_VALUE, NO_SIGNAL_LEVEL, SignalArea, SignalLevel, 
@@ -368,7 +451,13 @@ mod tests {
     
     const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
     const VERY_BIG_STRENGTH_VALUE: f32   = GREEN_SIGNAL_STRENGTH_VALUE * 1000.0;
+    const DEVICE_MAX_POWER: PowerUnit    = 1_000;
 
+    
+    fn device_power_system() -> PowerSystem {
+        PowerSystem::build(DEVICE_MAX_POWER, DEVICE_MAX_POWER)
+            .unwrap_or_else(|error| panic!("{}", error))
+    }
 
     fn drone_tx_module() -> TRXModule {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
@@ -409,6 +498,7 @@ mod tests {
     fn drone_with_trx_system_set(position: Point3D) -> Device {
         DeviceBuilder::new()
             .set_real_position(position)
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(),
@@ -443,12 +533,35 @@ mod tests {
             )
     }
 
+    fn default_gps_message_for(
+        device_id: DeviceId,
+        execution_time: Millisecond
+    ) -> Message {
+        Message::new(
+            UNKNOWN_ID, 
+            device_id, 
+            execution_time, 
+            MessageType::GPS(Point3D::default())
+        )
+    }
+
+    fn message_queue_contains(
+        message_queue: &MessageQueue, 
+        message_to_find: &Message
+    ) -> bool {
+        message_queue
+            .iter()
+            .find(|(_, message, _)| message == message_to_find)
+            .is_some()
+    }
+
 
     #[test]
     fn multiplying_infection_messages() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
 
         let command_center = DeviceBuilder::new()
+            .set_power_system(device_power_system())
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(),
@@ -565,6 +678,48 @@ mod tests {
                 drone2_id, 
                 drone4_id
             )
+        );
+    }
+
+    #[test]
+    fn no_duplicates_when_sending_gps_messages() {
+        let not_important_time = 0;
+        let frequency          = GPS_L1_FREQUENCY;
+
+        let devices = [
+            drone_with_trx_system_set(Point3D::new(7.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(14.0, 0.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(16.0, 7.0, 0.0)),
+            drone_with_trx_system_set(Point3D::new(16.0, -7.0, 0.0)),
+        ];
+        let device1_id = devices[1].id();
+        let device2_id = devices[2].id();
+        let device_map = IdToDeviceMap::from(devices);
+
+        let mut message_queue = MessageQueue::new();
+
+        let gps_message_for_device1 = default_gps_message_for(
+            device1_id,
+            not_important_time
+        );
+        let gps_message_for_device2 = default_gps_message_for(
+            device2_id,
+            not_important_time
+        );
+
+        message_queue.add_message(frequency, gps_message_for_device1);
+        message_queue.add_message(frequency, gps_message_for_device2);
+
+        assert_eq!(message_queue.len(), 2);
+
+        send_gps_messages(&device_map, &mut message_queue, not_important_time);
+        
+        assert_eq!(message_queue.len(), 4);
+        assert!(
+            message_queue_contains(&message_queue, &gps_message_for_device1)
+        );
+        assert!(
+            message_queue_contains(&message_queue, &gps_message_for_device2)
         );
     }
 }
