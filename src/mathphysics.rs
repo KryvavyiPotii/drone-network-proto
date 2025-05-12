@@ -15,23 +15,23 @@ pub const INVALID_POSITION: Point3D = Point3D {
 
 #[must_use]
 pub fn equation_of_motion_1d(
-    start_position: f32,
-    velocity: f32,
-    time_in_secs: f32
+    start_position: Meter,
+    velocity: MeterPerSecond,
+    time: Second
 ) -> f32 {
-    velocity.mul_add(time_in_secs, start_position)
+    velocity.mul_add(time, start_position)
 }
 
 #[must_use]
 pub fn equation_of_motion_3d(
     start_position: &Point3D,
     velocity: &Point3D,
-    time_in_secs: f32
+    time: Second
 ) -> Point3D {
     Point3D::new(
-        equation_of_motion_1d(start_position.x, velocity.x, time_in_secs),
-        equation_of_motion_1d(start_position.y, velocity.y, time_in_secs),
-        equation_of_motion_1d(start_position.z, velocity.z, time_in_secs),
+        equation_of_motion_1d(start_position.x, velocity.x, time),
+        equation_of_motion_1d(start_position.y, velocity.y, time),
+        equation_of_motion_1d(start_position.z, velocity.z, time),
     )
 }
 

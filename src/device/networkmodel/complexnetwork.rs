@@ -258,12 +258,11 @@ impl ComplexNetwork {
     }
 
     fn set_initial_state(&mut self) {
+        connect_gps_to_all_devices(&mut self.device_map);
+        self.send_gps_messages();
         self.update_connections_graph();
         self.update_signal_levels();
         self.remove_disconnected_devices();
-        connect_gps_to_all_devices(&mut self.device_map);
-        self.send_gps_messages();
-        self.process_message_queue();
     }
 
     pub fn update(&mut self) {
@@ -313,7 +312,6 @@ impl ComplexNetwork {
     }
     
     fn process_message_queue(&mut self) {
-        //dbg!(&self.message_queue);
         if self.message_queue.is_empty() {
             return;
         }
@@ -791,12 +789,11 @@ mod tests {
             .clone()
             .set_real_position(Point3D::new(1.1, 0.0, 0.0))
             .build();
-           
         let infected_drone_id = infected_drone.id();
+
         let vulnerable_drone = vulnerable_device_builder
             .set_real_position(Point3D::new(-1.1, 0.0, 0.0))
             .build();
-           
         let vulnerable_drone_id = vulnerable_drone.id();
 
         let devices = [command_center, infected_drone, vulnerable_drone];
@@ -914,12 +911,11 @@ mod tests {
             .clone()
             .set_real_position(Point3D::new(1.1, 0.0, 0.0))
             .build();
-           
         let infected_drone_id = infected_drone.id();
+
         let vulnerable_drone = vulnerable_device_builder
             .set_real_position(Point3D::new(-1.1, 0.0, 0.0))
             .build();
-           
         let vulnerable_drone_id = vulnerable_drone.id();
 
         let devices = [
@@ -1044,25 +1040,24 @@ mod tests {
             .clone()
             .set_real_position(Point3D::new(10.0, 0.0, 0.0))
             .build();
-           
         let infected_drone_id = infected_drone.id();
+
         let vulnerable_drone1 = vulnerable_device_builder
             .clone()
             .set_real_position(Point3D::new(1.1, 0.0, 0.0))
             .build();
-           
         let vulnerable_drone_id1 = vulnerable_drone1.id();
+
         let vulnerable_drone2 = vulnerable_device_builder
             .clone()
             .set_real_position(Point3D::new(2.0, 0.0, 0.0))
             .build();
-           
         let vulnerable_drone_id2 = vulnerable_drone2.id();
+
         let vulnerable_drone3 = vulnerable_device_builder
             .clone()
             .set_real_position(Point3D::new(3.0, 0.0, 0.0))
             .build();
-           
         let vulnerable_drone_id3 = vulnerable_drone3.id();
         
         let devices = [

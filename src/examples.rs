@@ -899,7 +899,7 @@ pub fn gps_spoofing(config: &Config) {
     let cc_tx_control_area_radius    = 300.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = RED_SIGNAL_LEVEL; 
-    let ewd_suppression_area_radius  = 100.0; 
+    let ewd_suppression_area_radius  = 200.0; 
         
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)

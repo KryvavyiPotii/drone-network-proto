@@ -141,16 +141,6 @@ fn message_queue_already_contains_gps_message_for(
     message_queue: &MessageQueue, 
     device_id: DeviceId
 ) -> bool {
-    /*dbg!(
-        &message_queue,
-    message_queue
-        .iter()
-        .any(|(_, message, _)| 
-            message.destination_id() == device_id 
-            && matches!(message.message_type(), MessageType::GPS(_))
-        )
-    );
-    */
     message_queue
         .iter()
         .any(|(_, message, _)| 
