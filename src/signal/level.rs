@@ -147,23 +147,12 @@ impl SignalLevel {
         rx_signal_level - self 
     }
 
-    #[must_use]
-    pub fn lower_level(&self) -> Self {
+    fn lower_level(self) -> Self {
         match self.0 {
             SignalLevelInner::Black(_) | SignalLevelInner::Red(_) => 
                 BLACK_SIGNAL_LEVEL,
             SignalLevelInner::Yellow(_) => RED_SIGNAL_LEVEL,
             SignalLevelInner::Green(_)  => YELLOW_SIGNAL_LEVEL
-        }
-    }
-
-    #[must_use]
-    pub fn higher_level(&self) -> Self {
-        match self.0 {
-            SignalLevelInner::Black(_) => RED_SIGNAL_LEVEL,
-            SignalLevelInner::Red(_)   => YELLOW_SIGNAL_LEVEL,
-            SignalLevelInner::Yellow(_) | SignalLevelInner::Green(_) => 
-                GREEN_SIGNAL_LEVEL 
         }
     }
 
@@ -442,30 +431,6 @@ mod tests {
         );
     }
     
-    #[test]
-    fn increasing_signal_level() {
-        assert!(
-            BLACK_SIGNAL_LEVEL
-                .higher_level()
-                .is_red()
-        );
-        assert!(
-            RED_SIGNAL_LEVEL
-                .higher_level()
-                .is_yellow()
-        );
-        assert!(
-            YELLOW_SIGNAL_LEVEL
-                .higher_level()
-                .is_green()
-        );
-        assert!(
-            GREEN_SIGNAL_LEVEL
-                .higher_level()
-                .is_green()
-        );
-    }
-
     #[test]
     fn signal_level_comparison_within_one_color() {
         assert!(SignalLevel::from(5.0) < SignalLevel::from(50.0));
