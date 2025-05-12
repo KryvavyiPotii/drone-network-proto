@@ -18,7 +18,7 @@ pub fn equation_of_motion_1d(
     start_position: Meter,
     velocity: MeterPerSecond,
     time: Second
-) -> f32 {
+) -> Meter {
     velocity.mul_add(time, start_position)
 }
 
