@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use full_palette::{GREEN_400, GREY, PINK, RED_400, YELLOW_700};
+use full_palette::{GREEN_400, GREY, ORANGE, PINK, RED_400, YELLOW_700};
 use plotters::coord::{ranged3d::Cartesian3d, types::RangedCoordf64, Shift};
 use plotters::prelude::*;
 use plotters::style::RGBColor;
@@ -10,7 +10,7 @@ use crate::signal::{
     SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
 };
 use crate::device::{Device, DESTINATION_RADIUS, STEP_DURATION};
-use crate::device::networkmodel::{AttackerDevice, NetworkModel};
+use crate::device::networkmodel::{AttackerDevice, AttackType, NetworkModel};
 use crate::mathphysics::{Megahertz, Meter, Point3D, Position};
 use crate::message::Goal;
 
@@ -109,20 +109,27 @@ fn device_primitive(
 }
 
 fn attacker_device_primitive(
-    attacker_device: &Device,
+    attacker_device: &AttackerDevice,
     frequency: Megahertz,
     screen_height: u16
 ) -> PlottersCircle {
     let radius = attacker_device
+        .device()
         .area(frequency)
         .radius();
+    let device_position = attacker_device.device().position();
+    let spoofs_gps = matches!(
+        attacker_device.attack_type(), 
+        AttackType::GPSSpoofing(_)
+    );
 
-    let point = plotters_point_from_point3d(attacker_device.position());
+    let point = plotters_point_from_point3d(device_position);
     let attacker_device_coverage = meters_to_pixels(radius, screen_height);
     let area_color = match frequency {
-        GPS_L1_FREQUENCY | GPS_L2_FREQUENCY => RED,
-        WIFI_2_4GHZ_FREQUENCY               => BLUE,
-        _ => GREY
+        GPS_L1_FREQUENCY | GPS_L2_FREQUENCY if spoofs_gps => ORANGE,
+        GPS_L1_FREQUENCY | GPS_L2_FREQUENCY               => RED,
+        WIFI_2_4GHZ_FREQUENCY                             => BLUE,
+        _                                                 => GREY
     };
 
     Circle::new(point, attacker_device_coverage, area_color)
@@ -432,7 +439,6 @@ impl<'a> PlottersRenderer<'a> {
         }
     }
 
-    // TODO handle GPS Spoofing
     fn draw_attacker_devices(
         &self, 
         attacker_devices: &[AttackerDevice],
@@ -442,7 +448,7 @@ impl<'a> PlottersRenderer<'a> {
             .iter()
             .map(|attacker_device| {
                 attacker_device_primitive(
-                    attacker_device.device(), 
+                    attacker_device, 
                     WIFI_2_4GHZ_FREQUENCY, 
                     self.screen_resolution.1
                 )
@@ -451,7 +457,7 @@ impl<'a> PlottersRenderer<'a> {
             .iter()
             .map(|attacker_device| {
                 attacker_device_primitive(
-                    attacker_device.device(), 
+                    attacker_device, 
                     GPS_L1_FREQUENCY, 
                     self.screen_resolution.1
                 )

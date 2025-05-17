@@ -806,7 +806,6 @@ mod tests {
         );
     }
 
-    // TODO finish
     #[test]
     fn ignore_receiving_signal_levels_on_unknown_frequency() {
         let frequency1 = 500;

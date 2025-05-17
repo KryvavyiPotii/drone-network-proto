@@ -24,5 +24,4 @@ pub enum InfectionState {
 pub enum InfectionType { 
     Indicator,
     Jamming(Megahertz),
-    // TODO struct field tampering
 }

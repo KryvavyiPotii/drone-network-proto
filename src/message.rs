@@ -10,8 +10,6 @@ use impl_ops::{
 use crate::device::DeviceId; 
 use crate::mathphysics::{Millisecond, Point3D};
 
-use super::signal::GREEN_SIGNAL_STRENGTH_VALUE;
-
 use self::infection::InfectionType;
 
 
@@ -22,23 +20,26 @@ pub mod infection;
 pub mod queue;
 
 
-const GPS_COST: MessageCost       = MessageCost(
-    GREEN_SIGNAL_STRENGTH_VALUE / 100.0 
-);
-const INFECTION_COST: MessageCost = MessageCost(
-    GREEN_SIGNAL_STRENGTH_VALUE / 50.0
-);
-const SET_GOAL_COST: MessageCost  = MessageCost(
-    GREEN_SIGNAL_STRENGTH_VALUE / 100.0 
-);
+const GPS_COST: MessageCost           = MessageCost(3.0);
+const INF_INDICATOR_COST: MessageCost = MessageCost(1.0);
+const INF_JAMMING_COST: MessageCost   = MessageCost(2.0);
+const SET_GOAL_COST: MessageCost      = MessageCost(5.0); 
 
 
-fn define_message_transmission_cost(message_type: &MessageType) -> MessageCost {
+fn message_transmission_cost(message_type: &MessageType) -> MessageCost {
     match message_type {
-        MessageType::GPS(_)       => GPS_COST,
-        // TODO add cost dependency on infection type
-        MessageType::Infection(_) => INFECTION_COST,
-        MessageType::SetGoal(_)   => SET_GOAL_COST,
+        MessageType::GPS(_)                    => GPS_COST,
+        MessageType::Infection(infection_type) => infection_transmission_cost(
+            infection_type
+        ),
+        MessageType::SetGoal(_)                => SET_GOAL_COST,
+    }
+}
+
+fn infection_transmission_cost(infection_type: &InfectionType) -> MessageCost {
+    match infection_type {
+        InfectionType::Indicator  => INF_INDICATOR_COST,
+        InfectionType::Jamming(_) => INF_JAMMING_COST
     }
 }
 
@@ -136,7 +137,7 @@ impl Message {
             source_id,
             destination_id,
             execution_time,
-            transmission_cost: define_message_transmission_cost(&message_type),
+            transmission_cost: message_transmission_cost(&message_type),
             message_type,
             message_state: MessageState::Waiting,
         }

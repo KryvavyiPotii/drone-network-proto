@@ -41,7 +41,7 @@ pub const DESTINATION_RADIUS: Meter = 5.0;
 pub const MAX_DRONE_SPEED: MeterPerSecond  = 25.0;
 
 
-const POWER_CONSUMING: PowerUnit = 1; 
+const PASSIVE_POWER_CONSUMING: PowerUnit = 1; 
 
 static FREE_DEVICE_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -399,13 +399,14 @@ impl Device {
     }
 
     pub fn update_state(&mut self) {
-        // TODO change place when complexity of the method increases
         // TODO consume power based on executed operations:
         // * moving
         // * receiving signals (messages)
         // * transmitting signals (messages)
         // * processing messages
-        if self.power_system.try_consume_power(POWER_CONSUMING).is_err() {
+        if self.power_system.try_consume_power(PASSIVE_POWER_CONSUMING)
+            .is_err() 
+        {
             self.selfdestruction();
             return;
         }
@@ -698,8 +699,8 @@ mod tests {
     fn device_selfdestructs_after_consuming_all_power() {
         let goal            = Goal::Attack(Point3D::new(5.0, 5.0, 5.0));
         let power_system    = PowerSystem::build(
-            POWER_CONSUMING, 
-            POWER_CONSUMING
+            PASSIVE_POWER_CONSUMING, 
+            PASSIVE_POWER_CONSUMING
         ).unwrap_or_else(|error| panic!("{}", error));
         let movement_system = MovementSystem::build(25.0)
             .unwrap_or_else(|error| panic!("{}", error));

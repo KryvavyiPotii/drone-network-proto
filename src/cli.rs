@@ -37,7 +37,7 @@ const DEFAULT_PLOT_CAPTION:     &str = "";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.10.0")
+        .version("0.10.1")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
@@ -119,6 +119,7 @@ pub fn cli() {
                 .value_parser([INF_INDICATOR, INF_JAMMING])
                 .help("Choose infection type")
         )
+        .arg_required_else_help(true)
         .get_matches();
 
     handle_arguments(&matches);
