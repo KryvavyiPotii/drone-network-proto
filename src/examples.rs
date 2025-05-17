@@ -13,9 +13,9 @@ use crate::device::networkmodel::{
 use crate::device::systems::{
     MovementSystem, PowerSystem, TRXModule, TRXSystem
 };
-use crate::infection::InfectionType;
 use crate::mathphysics::{Megahertz, Meter, Millisecond, Point3D, PowerUnit};
 use crate::message::{Goal, Message, MessageType};
+use crate::message::infection::InfectionType;
 use crate::signal::{
     SignalArea, SignalLevel, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
     RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY

@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::infection::{InfectionState, InfectionType, JAMMING_SIGNAL_LEVEL};
 use crate::mathphysics::{
     Megahertz, Meter, MeterPerSecond, Millisecond, Point3D, Position, PowerUnit, 
     equation_of_motion_3d, millis_to_secs, 
 };
 use crate::message::{Goal, Message, MessageType};
+use crate::message::infection::{
+    InfectionState, InfectionType, JAMMING_SIGNAL_LEVEL
+};
 use crate::signal::{
     FreqToLevelMap, SignalArea, SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, 
 };

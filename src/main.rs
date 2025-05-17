@@ -7,7 +7,6 @@ use crate::cli::cli;
 pub mod cli;
 pub mod device;
 pub mod examples;
-pub mod infection;
 pub mod mathphysics;
 pub mod message;
 pub mod signal;

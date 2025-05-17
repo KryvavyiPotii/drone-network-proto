@@ -12,12 +12,10 @@ use crate::device::networkmodel::{
     try_multiply_infection_message_from_receivers
 };
 use crate::mathphysics::{Megahertz, Millisecond};
-use crate::message::{
-    Message, MessagePreprocessError, MessageQueue, MessageType
-};
+use crate::message::{Message, MessageQueue, MessageType};
 use crate::signal::{GPS_L1_FREQUENCY, NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY};
 
-use super::AttackType;
+use super::{AttackType, MessagePreprocessError, try_preprocess_message};
 
 
 fn set_delays_snapshot_for_message(
@@ -325,7 +323,10 @@ impl ComplexNetwork {
         let mut infection_messages = Vec::new();
 
         for (frequency, message, delays_snapshot) in &mut self.message_queue {
-            let preprocess_result = message.try_preprocess(self.current_time);
+            let preprocess_result = try_preprocess_message(
+                message, 
+                self.current_time
+            );
 
             if let Err(MessagePreprocessError::TooEarly) = preprocess_result {
                 continue;
@@ -432,8 +433,8 @@ mod tests {
 
     use crate::device::{Device, DeviceBuilder};
     use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
-    use crate::infection::{InfectionType, INFECTION_DELAY};
     use crate::mathphysics::{Meter, Point3D, PowerUnit};
+    use crate::message::infection::{InfectionType, INFECTION_DELAY};
     use crate::signal::{
         GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, RED_SIGNAL_LEVEL, 
         SignalArea, SignalLevel, YELLOW_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY

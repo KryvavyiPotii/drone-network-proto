@@ -10,12 +10,14 @@ use crate::device::networkmodel::{
     try_multiply_infection_message_from_receivers
 };
 use crate::mathphysics::{Megahertz, Millisecond};
-use crate::message::{Message, MessagePreprocessError, MessageQueue};
+use crate::message::{Message, MessageQueue};
 use crate::signal::{
     GPS_L1_FREQUENCY, NO_SIGNAL_LEVEL, SignalLevel, WIFI_2_4GHZ_FREQUENCY
 };
 
-use super::UnicastMessageError;
+use super::{
+    MessagePreprocessError, UnicastMessageError, try_preprocess_message
+};
 
 
 const CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY: f64  = 0.95;
@@ -301,7 +303,7 @@ impl CellularAutomaton {
         for (frequency, message, _) in &mut self.message_queue {
             if let Err(
                 MessagePreprocessError::TooEarly
-            ) = message.try_preprocess(self.current_time) {
+            ) = try_preprocess_message(message, self.current_time) {
                 continue;
             }
             
@@ -384,9 +386,9 @@ mod tests {
     
     use crate::device::DeviceBuilder;
     use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
-    use crate::infection::{InfectionType, INFECTION_DELAY};
     use crate::mathphysics::{Meter, Point3D, PowerUnit};
     use crate::message::MessageType;
+    use crate::message::infection::{InfectionType, INFECTION_DELAY};
     use crate::signal::{
         GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE,
         SignalArea

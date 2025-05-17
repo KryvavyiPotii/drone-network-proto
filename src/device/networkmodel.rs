@@ -6,9 +6,9 @@ use crate::device::{
     ConnectionGraph, Device, DeviceId, IdToDeviceMap, IdToGoalMap, UNKNOWN_ID
 };
 use crate::device::connections::Topology;
-use crate::infection::INFECTION_DELAY;
 use crate::mathphysics::{Megahertz, Millisecond, Point3D, Position};
 use crate::message::{Message, MessageType, MessageQueue};
+use crate::message::infection::INFECTION_DELAY;
 use crate::signal::{GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, GREEN_SIGNAL_LEVEL};
 
 
@@ -19,6 +19,36 @@ pub use complexnetwork::ComplexNetwork;
 pub mod cellularautomaton;
 pub mod complexnetwork;
 
+
+#[derive(Error, Debug)]
+pub enum MessagePreprocessError {
+    #[error("Message is already preprocessed")]
+    AlreadyPreprocessed,
+    #[error("Message execution time is set to be later")]
+    TooEarly,
+}
+
+
+/// # Errors
+///
+/// Will return `Err` if execution time is greater than current time or
+/// message is already in progress or `ConnectionGraph` does not contain
+/// source device ID in message.
+fn try_preprocess_message(
+    message: &mut Message,
+    current_time: Millisecond,
+) -> Result<(), MessagePreprocessError> {
+    if message.is_in_progress() {
+        return Err(MessagePreprocessError::AlreadyPreprocessed);
+    }
+    if current_time < message.time() {
+        return Err(MessagePreprocessError::TooEarly);
+    }
+
+    message.process();
+
+    Ok(())
+}
 
 #[derive(Error, Debug)]
 pub enum UnicastMessageError {
@@ -426,11 +456,13 @@ impl NetworkModelBuilder {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::device::{ConnectionGraph, DeviceBuilder, IdToDeviceMap};
+    use crate::device::{
+        BROADCAST_ID, ConnectionGraph, DeviceBuilder, IdToDeviceMap
+    };
     use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
-    use crate::infection::InfectionType;
     use crate::mathphysics::{Meter, PowerUnit};
-    use crate::message::MessageType;
+    use crate::message::{Goal, MessageType};
+    use crate::message::infection::InfectionType;
     use crate::signal::{
         GREEN_SIGNAL_STRENGTH_VALUE, NO_SIGNAL_LEVEL, SignalArea, SignalLevel, 
         WIFI_2_4GHZ_FREQUENCY
@@ -546,6 +578,58 @@ mod tests {
     }
 
 
+    #[test]
+    fn preprocessing_already_preprocessed_message() {
+        let current_time = 10;
+        let mut message = Message::new(
+            UNKNOWN_ID,
+            BROADCAST_ID,
+            current_time, 
+            MessageType::SetGoal(Goal::Undefined)
+        );
+        message.process();
+
+        assert!(
+            matches!(
+                try_preprocess_message(&mut message, current_time), 
+                Err(MessagePreprocessError::AlreadyPreprocessed)
+            )
+        );
+    }
+
+    #[test]
+    fn too_early_message_preprocessing() {
+        let current_time = 12;
+        let mut message = Message::new(
+            UNKNOWN_ID,
+            BROADCAST_ID,
+            50, 
+            MessageType::SetGoal(Goal::Undefined)
+        );
+
+        assert!(
+            matches!(
+                try_preprocess_message(&mut message, current_time), 
+                Err(MessagePreprocessError::TooEarly)
+            )
+        );
+    }
+    
+    #[test]
+    fn correct_message_preprocessing() {
+        let current_time = 12;
+        let mut message = Message::new(
+            UNKNOWN_ID,
+            BROADCAST_ID,
+            current_time, 
+            MessageType::SetGoal(Goal::Undefined)
+        );
+
+        assert!(
+            try_preprocess_message(&mut message, current_time)
+                .is_ok()
+        );
+    }
     #[test]
     fn multiplying_infection_messages() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;

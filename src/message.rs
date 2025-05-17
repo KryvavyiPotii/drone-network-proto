@@ -6,18 +6,19 @@ use impl_ops::{
     _impl_binary_op_internal, _impl_binary_op_owned_borrowed, 
     _impl_binary_op_owned_owned, _parse_binary_op, impl_op, impl_op_ex
 };
-use thiserror::Error;
 
 use crate::device::DeviceId; 
-use crate::infection::InfectionType;
 use crate::mathphysics::{Millisecond, Point3D};
 
 use super::signal::GREEN_SIGNAL_STRENGTH_VALUE;
+
+use self::infection::InfectionType;
 
 
 pub use queue::MessageQueue;
 
 
+pub mod infection;
 pub mod queue;
 
 
@@ -113,15 +114,6 @@ pub enum MessageState {
 }
 
 
-#[derive(Error, Debug)]
-pub enum MessagePreprocessError {
-    #[error("Message is already preprocessed")]
-    AlreadyPreprocessed,
-    #[error("Message execution time is set to be later")]
-    TooEarly,
-}
-
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Message {
     source_id: DeviceId,
@@ -203,86 +195,56 @@ impl Message {
     pub fn is_finished(&self) -> bool {
         matches!(self.message_state, MessageState::Finished)
     }
-
-    /// # Errors
-    ///
-    /// Will return `Err` if execution time is greater than current time or
-    /// message is already in progress or `ConnectionGraph` does not contain
-    /// source device ID in message.
-    pub fn try_preprocess(
-        &mut self,
-        current_time: Millisecond,
-    ) -> Result<(), MessagePreprocessError> {
-        if self.is_in_progress() {
-            return Err(MessagePreprocessError::AlreadyPreprocessed);
-        }
-        if current_time < self.time() {
-            return Err(MessagePreprocessError::TooEarly);
-        }
-
-        self.process();
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::device::{BROADCAST_ID, UNKNOWN_ID};
+    use crate::device::UNKNOWN_ID;
 
     use super::*;
 
 
-    #[test]
-    fn preprocessing_already_preprocessed_message() {
-        let current_time = 10;
-        let mut message = Message::new(
-            UNKNOWN_ID,
-            BROADCAST_ID,
-            current_time, 
-            MessageType::SetGoal(Goal::Undefined)
-        );
-        message.process();
-
-        assert!(
-            matches!(
-                message.try_preprocess(current_time), 
-                Err(MessagePreprocessError::AlreadyPreprocessed)
-            )
-        );
+    fn message_is_waiting(message: &Message) -> bool {
+        matches!(message.message_state(), MessageState::Waiting) 
     }
 
-    #[test]
-    fn too_early_message_preprocessing() {
-        let current_time = 12;
-        let mut message = Message::new(
-            UNKNOWN_ID,
-            BROADCAST_ID,
-            50, 
-            MessageType::SetGoal(Goal::Undefined)
-        );
 
-        assert!(
-            matches!(
-                message.try_preprocess(current_time), 
-                Err(MessagePreprocessError::TooEarly)
-            )
+    #[test]
+    fn process_waiting_message() {
+        let not_important_message_type = MessageType::GPS(Point3D::default());
+
+        let mut waiting_message = Message::new(
+            UNKNOWN_ID, 
+            UNKNOWN_ID, 
+            0, 
+            not_important_message_type
         );
+        
+        assert!(message_is_waiting(&waiting_message));
+
+        waiting_message.process();
+
+        assert!(waiting_message.is_in_progress());
     }
     
     #[test]
-    fn correct_message_preprocessing() {
-        let current_time = 12;
-        let mut message = Message::new(
-            UNKNOWN_ID,
-            BROADCAST_ID,
-            current_time, 
-            MessageType::SetGoal(Goal::Undefined)
+    fn not_process_finished_message() {
+        let not_important_message_type = MessageType::GPS(Point3D::default());
+
+        let mut finished_message = Message::new(
+            UNKNOWN_ID, 
+            UNKNOWN_ID, 
+            0, 
+            not_important_message_type
         );
 
-        assert!(
-            message.try_preprocess(current_time)
-                .is_ok()
-        );
+        finished_message.finish();
+        
+        assert!(finished_message.is_finished());
+
+        finished_message.process();
+
+        assert!(!finished_message.is_in_progress());
+        assert!(finished_message.is_finished());
     }
 }
