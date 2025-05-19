@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use thiserror::Error;
+
 use crate::mathphysics::{
     Megahertz, Meter, MeterPerSecond, Millisecond, Point3D, Position, PowerUnit, 
     equation_of_motion_3d, millis_to_secs, 
@@ -15,7 +17,7 @@ use crate::signal::{
 };
 
 use systems::{
-    MovementSystem, PowerSystem, ReceiveMessageError, TRXSystem
+    MovementSystem, PowerSystem, PowerSystemError, TRXSystem, TRXSystemError
 };
 
 
@@ -41,13 +43,26 @@ pub const DESTINATION_RADIUS: Meter = 5.0;
 pub const MAX_DRONE_SPEED: MeterPerSecond  = 25.0;
 
 
-const PASSIVE_POWER_CONSUMING: PowerUnit = 1; 
+const MOVEMENT_POWER_CONSUMPTION:   PowerUnit = 5; 
+const PASSIVE_POWER_CONSUMPTION:    PowerUnit = 1; 
+const PROCESSING_POWER_CONSUMPTION: PowerUnit = 5; 
 
 static FREE_DEVICE_ID: AtomicUsize = AtomicUsize::new(1);
 
 
 fn generate_device_id() -> DeviceId {
     FREE_DEVICE_ID.fetch_add(1, Ordering::SeqCst)
+}
+
+
+#[derive(Debug, Error)]
+pub enum DeviceError {
+    #[error("System is disabled")]
+    DisabledSystem,
+    #[error("Power system failed with error `{0}`")]
+    PowerSystemError(#[from] PowerSystemError),
+    #[error("TRX system failed with error `{0}`")]
+    TRXSystemError(#[from] TRXSystemError),
 }
 
 
@@ -344,11 +359,11 @@ impl Device {
         &mut self,
         message: &Message,
         frequency: Megahertz,
-    ) -> Result<(), ReceiveMessageError> {
+    ) -> Result<(), TRXSystemError> {
         let destination_id = message.destination_id();
 
         if destination_id != BROADCAST_ID && self.id() != destination_id {
-            return Err(ReceiveMessageError::WrongDestination);
+            return Err(TRXSystemError::WrongMessageDestination);
         }
 
         self.trx_system.receive_message(frequency, message) 
@@ -373,8 +388,10 @@ impl Device {
         &mut self, 
         message: &Message,
         frequency: Megahertz, 
-    ) -> Result<(), ReceiveMessageError> {
+    ) -> Result<(), DeviceError> {
         self.receive_message(message, frequency)?;
+
+        self.try_consume_power(PROCESSING_POWER_CONSUMPTION)?;
 
         match message.message_type() {
             MessageType::GPS(gps_position)         => {
@@ -398,21 +415,12 @@ impl Device {
         Ok(())
     }
 
-    pub fn update_state(&mut self) {
-        // TODO consume power based on executed operations:
-        // * moving
-        // * receiving signals (messages)
-        // * transmitting signals (messages)
-        // * processing messages
-        if self.power_system.try_consume_power(PASSIVE_POWER_CONSUMING)
-            .is_err() 
-        {
-            self.selfdestruction();
-            return;
-        }
-        
+    pub fn update_state(&mut self) -> Result<(), DeviceError> {
+        self.try_consume_power(PASSIVE_POWER_CONSUMPTION)?;
         self.process_goal();
-        self.update_real_position();
+        self.update_real_position()?;
+
+        Ok(())
     }
 
     fn process_goal(&mut self) {
@@ -442,12 +450,33 @@ impl Device {
         self.movement_system.set_velocity(velocity);
     }
 
-    fn update_real_position(&mut self) {
+    fn update_real_position(&mut self) -> Result<(), DeviceError> {
+        if self.movement_system.is_disabled() {
+            return Err(DeviceError::DisabledSystem);
+        }
+
+        self.try_consume_power(MOVEMENT_POWER_CONSUMPTION)?;
+        
         self.real_position_in_meters = equation_of_motion_3d(
             &self.real_position_in_meters,
             &self.movement_system.velocity().displacement(),
             millis_to_secs(STEP_DURATION),
         );
+        
+        Ok(())
+    }
+
+    fn try_consume_power(
+        &mut self, 
+        power: PowerUnit
+    ) -> Result<(), PowerSystemError> {
+        self.power_system
+            .try_consume_power(power)
+            .or_else(|error| {
+                self.selfdestruction();
+
+                Err(error)
+            })
     }
 
     // Device can check if it has reached the goal only if it knows
@@ -697,10 +726,12 @@ mod tests {
 
     #[test]
     fn device_selfdestructs_after_consuming_all_power() {
-        let goal            = Goal::Attack(Point3D::new(5.0, 5.0, 5.0));
+        let goal  = Goal::Attack(Point3D::new(5.0, 5.0, 5.0));
+        let power = PASSIVE_POWER_CONSUMPTION + MOVEMENT_POWER_CONSUMPTION;
+        
         let power_system    = PowerSystem::build(
-            PASSIVE_POWER_CONSUMING, 
-            PASSIVE_POWER_CONSUMING
+            power, 
+            power,
         ).unwrap_or_else(|error| panic!("{}", error));
         let movement_system = MovementSystem::build(25.0)
             .unwrap_or_else(|error| panic!("{}", error));
@@ -709,21 +740,24 @@ mod tests {
         let mut device = DeviceBuilder::new()
             .set_goal(goal)
             .set_power_system(power_system.clone())
-            .set_trx_system(trx_system.clone())
             .set_movement_system(movement_system.clone())
+            .set_trx_system(trx_system.clone())
             .build();
 
         assert_eq!(device.goal, goal);
         assert_eq!(device.power_system, power_system);
         assert_eq!(device.trx_system, trx_system);
-        assert_eq!(device.movement_system, movement_system);
 
-        device.update_state();
-
+        assert!(device.update_state().is_ok());
         assert!(!device_is_destructed(&device));
         
-        device.update_state();
+        let _expected_error = DeviceError::PowerSystemError(
+            PowerSystemError::NotEnoughPower
+        );
 
+        assert!(
+            matches!(device.update_state(), Err(_expected_error))
+        );
         assert!(device_is_destructed(&device));
     }
     
@@ -813,7 +847,7 @@ mod tests {
         );
 
         for _ in (0..1000).step_by(STEP_DURATION as usize) {
-            device.update_state();
+            assert!(device.update_state().is_ok());
 
             assert_eq!(
                 *device.gps_position(), 
@@ -838,7 +872,7 @@ mod tests {
             .build();
 
         for _ in (0..1000).step_by(STEP_DURATION as usize) {
-            device_without_gps.update_state();
+            assert!(device_without_gps.update_state().is_ok());
         }
 
         assert_eq!(
@@ -877,7 +911,7 @@ mod tests {
                 ).is_ok()
             ); 
 
-            device.update_state();
+            assert!(device.update_state().is_ok());
         }
 
         assert!(reached_destination(&device, &destination_point));
@@ -1002,10 +1036,14 @@ mod tests {
             MessageType::SetGoal(Goal::Undefined)
         );
 
+        let _expected_error = DeviceError::TRXSystemError(
+            TRXSystemError::WrongMessageDestination
+        );
+
         assert!(
             matches!(
                 device.receive_and_process_message(&message, frequency),
-                Err(ReceiveMessageError::WrongDestination)
+                Err(_expected_error)
             )
         );
     }

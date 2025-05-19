@@ -22,23 +22,23 @@ pub enum MovementSystemBuildError {
 }
 
 #[derive(Error, Debug)]
-pub enum ReceiveMessageError {
-    #[error("Message execution cost is too high")]
-    TooExpensive,
-    #[error("Message destination ID does not match device ID")]
-    WrongDestination,
+pub enum PowerSystemBuildError {
+    #[error("Power is greater than max power")]
+    PowerIsGreaterThanMax,
 }
 
 #[derive(Error, Debug)]
-pub enum PowerConsumptionError {
+pub enum PowerSystemError {
     #[error("Provided power is greater than current power")]
     NotEnoughPower,
 }
 
 #[derive(Error, Debug)]
-pub enum PowerSystemBuildError {
-    #[error("Power is greater than max power")]
-    PowerIsGreaterThanMax,
+pub enum TRXSystemError {
+    #[error("Message execution cost is too high")]
+    TooExpensiveMessage,
+    #[error("Message destination ID does not match device ID")]
+    WrongMessageDestination,
 }
 
 
@@ -84,9 +84,9 @@ impl PowerSystem {
     pub fn try_consume_power(
         &mut self, 
         power_to_consume: PowerUnit
-    ) -> Result<(), PowerConsumptionError> {
+    ) -> Result<(), PowerSystemError> {
         let Some(power_left) = self.power.checked_sub(power_to_consume) else {
-            return Err(PowerConsumptionError::NotEnoughPower)
+            return Err(PowerSystemError::NotEnoughPower)
         };
 
         self.power = power_left;
@@ -100,18 +100,18 @@ impl PowerSystem {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MovementSystem {
     position_in_meters: Point3D,
-    max_speed_in_mps: MeterPerSecond,
+    max_speed: MeterPerSecond,
     velocity_in_mps: Vector3D,
 }
 
 impl MovementSystem {
     /// # Errors
     ///
-    /// Will return `Err` if `max_speed_in_mps` is negative. 
+    /// Will return `Err` if `max_speed` is negative. 
     pub fn build(
-        max_speed_in_mps: MeterPerSecond
+        max_speed: MeterPerSecond
     ) -> Result<Self, MovementSystemBuildError> {
-        if max_speed_in_mps < 0.0 {
+        if max_speed < 0.0 {
             return Err(MovementSystemBuildError::NegativeMaxSpeed);
         }
 
@@ -120,7 +120,7 @@ impl MovementSystem {
                 // Upon creation the system does not know its position.
                 // The position should be provided by GPS (from TRXSystem).
                 position_in_meters: Point3D::default(),
-                max_speed_in_mps,
+                max_speed,
                 velocity_in_mps: Vector3D::default()
             }
         )
@@ -133,12 +133,17 @@ impl MovementSystem {
     
     #[must_use]
     pub fn max_speed(&self) -> MeterPerSecond {
-        self.max_speed_in_mps
+        self.max_speed
     }
 
     #[must_use]
     pub fn velocity(&self) -> &Vector3D {
         &self.velocity_in_mps
+    }
+
+    #[must_use]
+    pub fn is_disabled(&self) -> bool {
+        self.max_speed == 0.0
     }
     
     pub fn set_position(&mut self, position: Point3D) {
@@ -146,17 +151,25 @@ impl MovementSystem {
     }
     
     pub fn set_velocity(&mut self, velocity_in_mps: Vector3D) {
+        if self.is_disabled() {
+            return;
+        }
+
         self.velocity_in_mps = velocity_in_mps;
-        self.velocity_in_mps.truncate(self.max_speed_in_mps);
+        self.velocity_in_mps.truncate(self.max_speed);
     }
     
     pub fn update_movement_direction(&mut self, destination: Point3D) {
+        if self.is_disabled() {
+            return;
+        }
+        
         self.velocity_in_mps = Vector3D::new(
             self.position_in_meters,
             destination
         );
         
-        self.velocity_in_mps.scale_to(self.max_speed_in_mps);
+        self.velocity_in_mps.scale_to(self.max_speed);
     }
 }
 
@@ -423,7 +436,7 @@ impl TRXSystem {
         &mut self,
         frequency: Megahertz,
         message: &Message
-    ) -> Result<(), ReceiveMessageError> {
+    ) -> Result<(), TRXSystemError> {
         let rx_module = match self {
             Self::Color(trx_module)          => trx_module,
             Self::Strength { rx_module, .. } => rx_module
@@ -433,7 +446,7 @@ impl TRXSystem {
         let new_signal_level = current_signal_level - message.cost();
         
         if new_signal_level < NO_SIGNAL_LEVEL {
-            return Err(ReceiveMessageError::TooExpensive);
+            return Err(TRXSystemError::TooExpensiveMessage);
         }
 
         rx_module.set_signal_level(new_signal_level, frequency);
@@ -725,7 +738,7 @@ mod tests {
         assert!(
             matches!(
                 strength_rx_system.receive_message(frequency, &message),
-                Err(ReceiveMessageError::TooExpensive)
+                Err(TRXSystemError::TooExpensiveMessage)
             )
         );
 
@@ -734,7 +747,7 @@ mod tests {
         assert!(
             matches!(
                 color_rx_system.receive_message(frequency, &message),
-                Err(ReceiveMessageError::TooExpensive)
+                Err(TRXSystemError::TooExpensiveMessage)
             )
         );
     }

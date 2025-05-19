@@ -12,7 +12,8 @@ use rustworkx_core::shortest_path::{astar, dijkstra};
 use crate::device::{Device, DeviceId, STEP_DURATION};
 use crate::device::{IdToDeviceMap, IdToLevelMap};
 use crate::mathphysics::{
-    kmps_to_mpms, time_in_millis_from_distance_and_speed, Megahertz, Meter, Millisecond, Position, SPEED_OF_LIGHT
+    kmps_to_mpms, time_in_millis_from_distance_and_speed, Megahertz, Meter, 
+    Millisecond, Position, SPEED_OF_LIGHT
 };
 use crate::message::infection::{InfectionState, InfectionType};
 

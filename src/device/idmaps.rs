@@ -83,7 +83,9 @@ impl IdToDeviceMap {
     pub fn update_states(&mut self) {
         self.0
             .values_mut()
-            .for_each(Device::update_state);
+            .for_each(|device| {
+                let _ = device.update_state();
+            });
     }
 
     pub fn handle_infection(&mut self) {
