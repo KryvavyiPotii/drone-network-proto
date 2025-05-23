@@ -6,9 +6,10 @@ use impl_ops::{
     _impl_binary_op_owned_owned, _parse_binary_op, impl_op, impl_op_ex
 };
 
-use crate::mathphysics::{wave_length_in_meters, Megahertz, Meter};
-use crate::message::MessageCost;
-use crate::signal::{
+use crate::backend::mathphysics::{wave_length_in_meters, Megahertz, Meter};
+use crate::backend::message::MessageCost;
+
+use super::{
     GREEN_SIGNAL_STRENGTH, MAX_BLACK_SIGNAL_STRENGTH, MAX_RED_SIGNAL_STRENGTH, 
     MAX_YELLOW_SIGNAL_STRENGTH, NO_SIGNAL_STRENGTH, SignalArea, SignalStrength,
     SIGNAL_STRENGTH_SCALING,
@@ -30,6 +31,11 @@ pub const YELLOW_SIGNAL_LEVEL: SignalLevel =
 pub const GREEN_SIGNAL_LEVEL: SignalLevel  = 
     SignalLevel(SignalLevelInner::Green(GREEN_SIGNAL_STRENGTH));
 
+const CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY: f64  = 0.95;
+const CHANGE_SIGNAL_LEVEL_FROM_YELLOW_PROBABILITY: f64 = 0.70;
+const CHANGE_SIGNAL_LEVEL_FROM_RED_PROBABILITY: f64    = 0.50;
+const CHANGE_SIGNAL_LEVEL_FROM_BLACK_PROBABILITY: f64  = 0.0;
+
 
 #[must_use]
 pub fn min_signal_level(
@@ -40,6 +46,25 @@ pub fn min_signal_level(
         signal_level1
     } else {
         signal_level2
+    }
+}
+
+#[must_use]
+pub fn signal_level_change_happens(signal_level: SignalLevel) -> bool {
+    let probability = signal_level_change_probability(signal_level);
+   
+    rand::random_bool(probability)
+}
+
+fn signal_level_change_probability(signal_level: SignalLevel) -> f64 {
+    if signal_level.is_green() {
+        CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY
+    } else if signal_level.is_yellow() {
+        CHANGE_SIGNAL_LEVEL_FROM_YELLOW_PROBABILITY
+    } else if signal_level.is_red() {
+        CHANGE_SIGNAL_LEVEL_FROM_RED_PROBABILITY
+    } else {
+        CHANGE_SIGNAL_LEVEL_FROM_BLACK_PROBABILITY
     }
 }
 
@@ -108,6 +133,10 @@ impl SignalLevel {
     // self - SignalLevel of Receiver.
     #[must_use]
     pub fn receive_by_color(&self, tx_signal_level: Self) -> Self {
+        if !signal_level_change_happens(tx_signal_level) {
+            return *self;
+        }
+
         if tx_signal_level.is_green() {
             *self
         } else if self.is_green() {
@@ -128,6 +157,10 @@ impl SignalLevel {
     // self - SignalLevel of Suppressor.
     #[must_use]
     pub fn suppress_by_color(&self, rx_signal_level: Self) -> Self {
+        if !signal_level_change_happens(*self) {
+            return rx_signal_level;
+        }
+        
         if self.is_black() {
             rx_signal_level    
         } else if self.is_red() && rx_signal_level.is_green() {
@@ -390,6 +423,54 @@ mod tests {
         )
     }
 
+    fn receives_by_color_correctly(
+        current_signal_level: SignalLevel, 
+        tx_signal_level: SignalLevel,
+        expected_signal_level_color: SignalLevel
+    ) -> bool {
+        let probability = signal_level_change_probability(tx_signal_level);
+        let iterations = iterations_from_probability(probability); 
+
+        for _ in 0..iterations {
+            let received_signal_level = current_signal_level
+                .receive_by_color(tx_signal_level);
+
+            if received_signal_level.same_level(&expected_signal_level_color) {
+                return true;
+            }
+        }
+
+        false
+    }
+    
+    fn suppresses_by_color_correctly(
+        suppressor_signal_level: SignalLevel, 
+        rx_signal_level: SignalLevel,
+        expected_signal_level_color: SignalLevel
+    ) -> bool {
+        let probability = signal_level_change_probability(
+            suppressor_signal_level
+        );
+        let iterations = iterations_from_probability(probability); 
+
+        for _ in 0..iterations {
+            let suppressed_signal_level = suppressor_signal_level
+                .suppress_by_color(rx_signal_level);
+
+            if suppressed_signal_level
+                .same_level(&expected_signal_level_color) 
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn iterations_from_probability(probability: f64) -> u64 {
+        (probability * 100.0).floor() as u64
+    }
+
     
     #[test]
     fn negative_signal_strength_is_allowed() {
@@ -518,45 +599,55 @@ mod tests {
     #[test]
     fn receive_green_signal_level_with_green_max_by_color() {
         assert!(
-            GREEN_SIGNAL_LEVEL.receive_by_color(
+            receives_by_color_correctly(
+                GREEN_SIGNAL_LEVEL, 
+                GREEN_SIGNAL_LEVEL, 
                 GREEN_SIGNAL_LEVEL
-            ).is_green()
+            )
         );
     }
 
     #[test]
     fn receive_higher_signal_level_with_lower_max_by_color() {
         assert!(
-            YELLOW_SIGNAL_LEVEL.receive_by_color(
-                GREEN_SIGNAL_LEVEL
-            ).is_yellow()
+            receives_by_color_correctly(
+                YELLOW_SIGNAL_LEVEL, 
+                GREEN_SIGNAL_LEVEL, 
+                YELLOW_SIGNAL_LEVEL
+            )
         );
     }
 
     #[test]
     fn receive_lower_signal_level_with_green_max_by_color() {
         assert!(
-            GREEN_SIGNAL_LEVEL.receive_by_color(
+            receives_by_color_correctly(
+                GREEN_SIGNAL_LEVEL, 
+                RED_SIGNAL_LEVEL, 
                 RED_SIGNAL_LEVEL
-            ).is_red()
+            )
         );
     }
 
     #[test]
     fn receive_yellow_signal_level_with_yellow_max_by_color() {
         assert!(
-            YELLOW_SIGNAL_LEVEL.receive_by_color(
-                YELLOW_SIGNAL_LEVEL
-            ).is_red()
+            receives_by_color_correctly(
+                YELLOW_SIGNAL_LEVEL, 
+                YELLOW_SIGNAL_LEVEL, 
+                RED_SIGNAL_LEVEL
+            )
         );
     }
 
     #[test]
     fn receive_lower_signal_level_with_yellow_max_by_color() {
         assert!(
-            YELLOW_SIGNAL_LEVEL.receive_by_color(
-                RED_SIGNAL_LEVEL
-            ).is_black()
+            receives_by_color_correctly(
+                YELLOW_SIGNAL_LEVEL, 
+                RED_SIGNAL_LEVEL, 
+                BLACK_SIGNAL_LEVEL
+            )
         );
     }
 
@@ -606,49 +697,45 @@ mod tests {
     
     #[test]
     fn partially_suppress_green_signal_level_with_red_by_color() {
-        let suppressor_signal_level = RED_SIGNAL_LEVEL;
-        let rx_signal_level = GREEN_SIGNAL_LEVEL;
-        
         assert!(
-            suppressor_signal_level
-                .suppress_by_color(rx_signal_level)
-                .is_yellow()
+            suppresses_by_color_correctly(
+                RED_SIGNAL_LEVEL, 
+                GREEN_SIGNAL_LEVEL, 
+                YELLOW_SIGNAL_LEVEL
+            )
         );
     }
     
     #[test]
     fn partially_suppress_green_signal_level_with_yellow_by_color() {
-        let suppressor_signal_level = YELLOW_SIGNAL_LEVEL;
-        let rx_signal_level = GREEN_SIGNAL_LEVEL;
-        
         assert!(
-            suppressor_signal_level
-                .suppress_by_color(rx_signal_level)
-                .is_red()
+            suppresses_by_color_correctly(
+                YELLOW_SIGNAL_LEVEL, 
+                GREEN_SIGNAL_LEVEL, 
+                RED_SIGNAL_LEVEL
+            )
         );
     }
     
     #[test]
     fn partially_suppress_yellow_signal_level_with_red_by_color() {
-        let suppressor_signal_level = YELLOW_SIGNAL_LEVEL;
-        let rx_signal_level = GREEN_SIGNAL_LEVEL;
-        
         assert!(
-            suppressor_signal_level
-                .suppress_by_color(rx_signal_level)
-                .is_red()
+            suppresses_by_color_correctly(
+                RED_SIGNAL_LEVEL, 
+                YELLOW_SIGNAL_LEVEL, 
+                RED_SIGNAL_LEVEL
+            )
         );
     }
     
     #[test]
     fn completely_suppress_signal_by_color() {
-        let suppressor_signal_level = GREEN_SIGNAL_LEVEL;
-        let rx_signal_level = GREEN_SIGNAL_LEVEL;
-        
         assert!(
-            suppressor_signal_level
-                .suppress_by_color(rx_signal_level)
-                .is_black()
+            suppresses_by_color_correctly(
+                GREEN_SIGNAL_LEVEL, 
+                GREEN_SIGNAL_LEVEL, 
+                BLACK_SIGNAL_LEVEL
+            )
         );
     }
    

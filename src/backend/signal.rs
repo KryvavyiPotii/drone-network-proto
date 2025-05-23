@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::mathphysics::Megahertz;
+use super::mathphysics::Megahertz;
 
 
 pub use area::*;
@@ -14,7 +14,6 @@ pub mod strength;
 
 
 pub const GPS_L1_FREQUENCY: Megahertz = 1_575;
-pub const GPS_L2_FREQUENCY: Megahertz = 1_227;
 pub const WIFI_2_4GHZ_FREQUENCY: Megahertz = 2_400;
 
 // Const for proper signal strength scaling at distance.

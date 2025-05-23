@@ -1,37 +1,13 @@
 use thiserror::Error;
 
-use crate::mathphysics::{
-    Megahertz, Meter, MeterPerSecond, Point3D, PowerUnit, Vector3D
-};
-use crate::message::Message;
-use crate::signal::{
+use crate::backend::mathphysics::{Megahertz, Meter};
+use crate::backend::message::Message;
+use crate::backend::signal::{
     BLACK_SIGNAL_LEVEL, FreqToLevelMap, NO_SIGNAL_LEVEL, SignalArea, SignalLevel
 };
 
+use super::TRXModule;
 
-pub use modules::*;
-
-
-pub mod modules;
-
-
-#[derive(Error, Debug)]
-pub enum MovementSystemBuildError {
-    #[error("Maximum speed is negative")]
-    NegativeMaxSpeed
-}
-
-#[derive(Error, Debug)]
-pub enum PowerSystemBuildError {
-    #[error("Power is greater than max power")]
-    PowerIsGreaterThanMax,
-}
-
-#[derive(Error, Debug)]
-pub enum PowerSystemError {
-    #[error("Provided power is greater than current power")]
-    NotEnoughPower,
-}
 
 #[derive(Error, Debug)]
 pub enum TRXSystemError {
@@ -39,138 +15,6 @@ pub enum TRXSystemError {
     TooExpensiveMessage,
     #[error("Message destination ID does not match device ID")]
     WrongMessageDestination,
-}
-
-
-// By default the system can supply any power, because its maximum power is 0.0.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct PowerSystem {
-    max_power: PowerUnit,
-    power: PowerUnit,
-}
-
-impl PowerSystem {
-    /// # Errors
-    ///
-    /// Will return `Err` if provided power is higher than provided max power.
-    pub fn build(
-        max_power: PowerUnit, 
-        power: PowerUnit
-    ) -> Result<Self, PowerSystemBuildError> {
-        if power > max_power {
-            return Err(PowerSystemBuildError::PowerIsGreaterThanMax);
-        }
-
-        Ok(Self { max_power, power })
-    }
-
-    #[must_use]
-    pub fn max_power(&self) -> PowerUnit {
-        self.max_power
-    }
-
-    #[must_use]
-    pub fn power(&self) -> PowerUnit {
-        self.power
-    }
-
-    pub fn set_power(&mut self, power: PowerUnit) {
-        self.power = self.max_power.min(power);
-    }
-
-    /// # Errors
-    ///
-    /// Will return `Err` if device does not have enough power.
-    pub fn try_consume_power(
-        &mut self, 
-        power_to_consume: PowerUnit
-    ) -> Result<(), PowerSystemError> {
-        let Some(power_left) = self.power.checked_sub(power_to_consume) else {
-            return Err(PowerSystemError::NotEnoughPower)
-        };
-
-        self.power = power_left;
-
-        Ok(())
-    }
-}
-
-
-// By default the system can not move, because its maximum speed is 0.0.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MovementSystem {
-    position_in_meters: Point3D,
-    max_speed: MeterPerSecond,
-    velocity_in_mps: Vector3D,
-}
-
-impl MovementSystem {
-    /// # Errors
-    ///
-    /// Will return `Err` if `max_speed` is negative. 
-    pub fn build(
-        max_speed: MeterPerSecond
-    ) -> Result<Self, MovementSystemBuildError> {
-        if max_speed < 0.0 {
-            return Err(MovementSystemBuildError::NegativeMaxSpeed);
-        }
-
-        Ok(
-            Self {
-                // Upon creation the system does not know its position.
-                // The position should be provided by GPS (from TRXSystem).
-                position_in_meters: Point3D::default(),
-                max_speed,
-                velocity_in_mps: Vector3D::default()
-            }
-        )
-    }
-    
-    #[must_use]
-    pub fn position(&self) -> &Point3D {
-        &self.position_in_meters
-    }
-    
-    #[must_use]
-    pub fn max_speed(&self) -> MeterPerSecond {
-        self.max_speed
-    }
-
-    #[must_use]
-    pub fn velocity(&self) -> &Vector3D {
-        &self.velocity_in_mps
-    }
-
-    #[must_use]
-    pub fn is_disabled(&self) -> bool {
-        self.max_speed == 0.0
-    }
-    
-    pub fn set_position(&mut self, position: Point3D) {
-        self.position_in_meters = position;
-    }
-    
-    pub fn set_velocity(&mut self, velocity_in_mps: Vector3D) {
-        if self.is_disabled() {
-            return;
-        }
-
-        self.velocity_in_mps = velocity_in_mps;
-        self.velocity_in_mps.truncate(self.max_speed);
-    }
-    
-    pub fn update_movement_direction(&mut self, destination: Point3D) {
-        if self.is_disabled() {
-            return;
-        }
-        
-        self.velocity_in_mps = Vector3D::new(
-            self.position_in_meters,
-            destination
-        );
-        
-        self.velocity_in_mps.scale_to(self.max_speed);
-    }
 }
 
 
@@ -415,7 +259,7 @@ impl TRXSystem {
                     .signal_level(frequency);
                 let received_signal_level = current_signal_level
                     .receive_by_color(tx_signal_level);
-                
+
                 trx_module.set_signal_level(received_signal_level, frequency);
             },
             Self::Strength { rx_module, .. } => {
@@ -426,7 +270,7 @@ impl TRXSystem {
 
                 rx_module.set_signal_level(received_signal_level, frequency);
             },
-        };
+        }
     }
 
     /// # Errors
@@ -470,99 +314,15 @@ impl Default for TRXSystem {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::device::{BROADCAST_ID, UNKNOWN_ID};
-    use crate::message::{Goal, Message, MessageType};
-    use crate::signal::{
+    use crate::backend::device::{BROADCAST_ID, UNKNOWN_ID};
+    use crate::backend::message::{Goal, Message, MessageType};
+    use crate::backend::signal::{
         SignalStrength, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL, 
         WIFI_2_4GHZ_FREQUENCY, YELLOW_SIGNAL_LEVEL
     };
 
     use super::*;
 
-
-    #[test]
-    fn default_power_system_does_not_supply_power() {
-        let default_power_system = PowerSystem::default();
-
-        assert_eq!(default_power_system.max_power(), 0);
-    }
-
-    #[test]
-    fn building_power_system_with_power_greater_than_max_is_impossible() {
-        let max_power      = 50;
-        let too_high_power = max_power * 2;
-
-        let result = PowerSystem::build(max_power, too_high_power);
-
-        assert!(
-            matches!(result, Err(PowerSystemBuildError::PowerIsGreaterThanMax))
-        );
-    }
-
-    #[test]
-    fn setting_higher_power_than_max_is_impossible() {
-        let max_power = 50;
-        let power     = max_power / 2;
-
-        let mut power_system = PowerSystem::build(max_power, power)
-            .unwrap_or_else(|error| panic!("{}", error));
-
-        assert_eq!(power_system.max_power(), max_power);
-        assert_eq!(power_system.power(), power);
-
-        let too_high_power = max_power * 2;
-        
-        power_system.set_power(too_high_power);
-
-        assert_eq!(power_system.power(), max_power);
-    }
-    
-    #[test]
-    fn default_movement_system_is_immovable() {
-        let default_movement_system = MovementSystem::default();
-
-        assert_eq!(default_movement_system.max_speed(), 0.0);
-    }
-
-    #[test]
-    fn building_movement_system_with_negative_max_speed() {
-        let result = MovementSystem::build(-5.0);
-
-        assert!(
-            matches!(result, Err(MovementSystemBuildError::NegativeMaxSpeed))
-        );
-    }
-
-    #[test]
-    fn setting_velocity() {
-        let max_speed = 5.0;
-        let mut movement_system = MovementSystem::build(max_speed)
-            .unwrap();
-
-        assert_eq!(*movement_system.velocity(), Vector3D::default());
-
-        let normal_velocity = Vector3D::new(
-            Point3D::default(), 
-            Point3D::new(max_speed / 2.0, 0.0, 0.0)
-        );
-        movement_system.set_velocity(normal_velocity);
-        
-        assert_eq!(*movement_system.velocity(), normal_velocity);
-
-        let too_high_velocity = Vector3D::new(
-            Point3D::default(), 
-            Point3D::new(max_speed * 2.0, 0.0, 0.0)
-        );
-        movement_system.set_velocity(too_high_velocity);
-
-        assert_eq!(
-            *movement_system.velocity(), 
-            Vector3D::new(
-                Point3D::default(),
-                Point3D::new(max_speed, 0.0, 0.0)
-            )
-        );
-    }
 
     #[test]
     fn setting_even_or_too_high_rx_signal_levels() {

@@ -1,29 +1,25 @@
 use std::collections::hash_map::Values;
 
-use crate::device::{
+use crate::backend::device::{
     BROADCAST_ID, ConnectionGraph, Device, DeviceId, FindSignalLevel, 
-    IdToDeviceMap, IdToGoalMap, IdToLevelMap, STEP_DURATION, Topology, 
+    IdToDeviceMap, IdToGoalMap, IdToLevelMap, STEP_DURATION, Topology 
 };
-use crate::device::networkmodel::{
-    AttackerDevice, AttackType, connect_gps_to_all_devices, 
-    enqueue_infection_messages, process_gps_spoofing, send_gps_messages, 
-    try_multiply_infection_message_from_receivers
-};
-use crate::mathphysics::{Megahertz, Millisecond};
-use crate::message::{Message, MessageQueue};
-use crate::signal::{
-    GPS_L1_FREQUENCY, NO_SIGNAL_LEVEL, SignalLevel, WIFI_2_4GHZ_FREQUENCY
+use crate::backend::mathphysics::{Megahertz, Millisecond};
+use crate::backend::message::{Message, MessageQueue};
+use crate::backend::signal::{
+    NO_SIGNAL_LEVEL, SignalLevel, signal_level_change_happens, 
+    WIFI_2_4GHZ_FREQUENCY
 };
 
-use super::{
-    MessagePreprocessError, UnicastMessageError, try_preprocess_message
+use super::attack::{
+    enqueue_malicious_messages, process_electronic_warfare, 
+    process_gps_spoofing, process_malware,
+    try_multiply_malicious_message_from_receivers, AttackType, AttackerDevice
 };
-
-
-const CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY: f64  = 0.95;
-const CHANGE_SIGNAL_LEVEL_FROM_YELLOW_PROBABILITY: f64 = 0.70;
-const CHANGE_SIGNAL_LEVEL_FROM_RED_PROBABILITY: f64    = 0.50;
-const CHANGE_SIGNAL_LEVEL_FROM_BLACK_PROBABILITY: f64  = 0.0;
+use super::msgproc::{
+    MessagePreprocessError, UnicastMessageError, connect_gps_to_all_devices, 
+    send_gps_messages, try_preprocess_message
+};
 
 
 fn send_message_and_handle_infection(
@@ -106,38 +102,21 @@ fn process_attack(
                 attacker_device.device(),
                 &spoofed_position,
                 current_time
+            ),
+        AttackType::MalwareDistribution(malware)  =>
+            process_malware(
+                device_map, 
+                message_queue, 
+                attacker_device.device(),
+                &malware,
+                current_time
             )
-    }
-}
-
-fn process_electronic_warfare(device_map: &mut IdToDeviceMap, ewd: &Device) {
-    for device in device_map.devices_mut() {
-        suppress_with_probability(ewd, device, WIFI_2_4GHZ_FREQUENCY);
-        suppress_with_probability(ewd, device, GPS_L1_FREQUENCY);
-    }
-}
-
-fn suppress_with_probability(
-    tx: &Device,
-    rx: &mut Device,
-    frequency: Megahertz
-) {
-    let suppressor_signal_level_at_rx = tx.propagated_signal_level_at(
-        rx,
-        frequency
-    );
-
-    if signal_level_change_happens(suppressor_signal_level_at_rx) {
-        rx.signal_level_suppression(
-            suppressor_signal_level_at_rx,
-            frequency, 
-        );
     }
 }
 
 // TODO optimize to avoid double rx.signal_level: in propagated_signal_level_at
 // and in rx.signal_level itself
-fn effective_propagated_signal(
+fn stateful_propagated_signal_level_at(
     tx: &Device,
     rx: &Device,
     frequency: Megahertz
@@ -147,33 +126,13 @@ fn effective_propagated_signal(
     if signal_level_change_happens(tx_signal_level_at_rx) {
         tx_signal_level_at_rx
     } else {
-        let current_signal_level = *rx.rx_signal_level(frequency);
-        
-        current_signal_level
-    }
-}
-
-fn signal_level_change_happens(signal_level: SignalLevel) -> bool {
-    let probability = signal_level_change_probability(signal_level);
-   
-    rand::random_bool(probability)
-}
-
-fn signal_level_change_probability(signal_level: SignalLevel) -> f64 {
-    if signal_level.is_black() {
-        CHANGE_SIGNAL_LEVEL_FROM_BLACK_PROBABILITY
-    } else if signal_level.is_red() {
-        CHANGE_SIGNAL_LEVEL_FROM_RED_PROBABILITY
-    } else if signal_level.is_yellow() {
-        CHANGE_SIGNAL_LEVEL_FROM_YELLOW_PROBABILITY
-    } else {
-        CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY
+        *rx.rx_signal_level(frequency)
     }
 }
 
 
 #[derive(Clone)]
-pub struct CellularAutomaton {
+pub struct StatefulModel {
     current_time: Millisecond,
     command_device_id: DeviceId,
     device_map: IdToDeviceMap,
@@ -183,7 +142,7 @@ pub struct CellularAutomaton {
     message_queue: MessageQueue,
 }
 
-impl CellularAutomaton {
+impl StatefulModel {
     #[must_use]
     pub fn new(
         command_device_id: DeviceId,
@@ -192,7 +151,7 @@ impl CellularAutomaton {
         scenario: &[(Megahertz, Message)],
         topology: Topology,
     ) -> Self {
-        let mut cellular_automaton = Self {
+        let mut stateful_model = Self {
             current_time: 0,
             command_device_id,
             device_map,
@@ -202,9 +161,9 @@ impl CellularAutomaton {
             message_queue: MessageQueue::from(scenario),
         };
 
-        cellular_automaton.set_initial_state();
+        stateful_model.set_initial_state();
 
-        cellular_automaton
+        stateful_model
     }
     
     #[must_use]
@@ -298,7 +257,7 @@ impl CellularAutomaton {
             return;
         }
 
-        let mut infection_messages = Vec::new();
+        let mut malicious_messages = Vec::new();
         
         for (frequency, message, _) in &mut self.message_queue {
             if let Err(
@@ -315,20 +274,20 @@ impl CellularAutomaton {
 
             message.finish();
 
-            try_multiply_infection_message_from_receivers(
+            let _ = try_multiply_malicious_message_from_receivers(
                 message,
                 *frequency,
                 &receiver_ids,
                 &self.device_map,
                 &self.connections,
-                &mut infection_messages
+                &mut malicious_messages
             );
         }
         
         self.message_queue.remove_finished_messages();
         
-        enqueue_infection_messages(
-            &infection_messages,
+        enqueue_malicious_messages(
+            &malicious_messages,
             &mut self.message_queue,
             &self.device_map,
         );
@@ -361,7 +320,7 @@ impl CellularAutomaton {
     }
 }
 
-impl FindSignalLevel for CellularAutomaton {
+impl FindSignalLevel for StatefulModel {
     fn try_set_better_signal_level(
         tx: &Device,
         rx: &Device,
@@ -371,7 +330,11 @@ impl FindSignalLevel for CellularAutomaton {
         let rx_signal_level = signal_levels
             .get(&rx.id())
             .unwrap_or(&NO_SIGNAL_LEVEL);
-        let signal_level_at_rx = effective_propagated_signal(tx, rx, frequency);
+        let signal_level_at_rx = stateful_propagated_signal_level_at(
+            tx, 
+            rx, 
+            frequency
+        );
 
         if signal_level_at_rx > *rx_signal_level {
             signal_levels.insert(rx.id(), signal_level_at_rx);
@@ -384,12 +347,12 @@ impl FindSignalLevel for CellularAutomaton {
 mod tests {
     use std::collections::HashMap;
     
-    use crate::device::DeviceBuilder;
-    use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
-    use crate::mathphysics::{Meter, Point3D, PowerUnit};
-    use crate::message::MessageType;
-    use crate::message::infection::{InfectionType, INFECTION_DELAY};
-    use crate::signal::{
+    use crate::backend::device::DeviceBuilder;
+    use crate::backend::device::systems::{PowerSystem, TRXModule, TRXSystem};
+    use crate::backend::malware::{Malware, MalwareType};
+    use crate::backend::mathphysics::{Meter, Point3D, PowerUnit};
+    use crate::backend::message::MessageType;
+    use crate::backend::signal::{
         GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE,
         SignalArea
     };
@@ -399,8 +362,9 @@ mod tests {
 
     const SOME_FREQUENCY: Megahertz      = 5_000;
     const DRONE_TX_CONTROL_RADIUS: Meter = 30.0;
-    const VERY_BIG_STRENGTH_VALUE: f32  = GREEN_SIGNAL_STRENGTH_VALUE * 1_000.0;
     const DEVICE_MAX_POWER: PowerUnit    = 10_000;
+    const VERY_BIG_STRENGTH_VALUE: f32   = 
+        GREEN_SIGNAL_STRENGTH_VALUE * 1_000.0;
 
     
     fn device_power_system() -> PowerSystem {
@@ -414,9 +378,12 @@ mod tests {
            
     }
     
-    fn wait_for_infection(automaton: &mut CellularAutomaton) {
-        for _ in (0..=INFECTION_DELAY).step_by(STEP_DURATION as usize) {
-            automaton.update();
+    fn wait_for_infection(
+        stateful_model: &mut StatefulModel, 
+        infection_delay: Millisecond
+    ) {
+        for _ in (0..=infection_delay).step_by(STEP_DURATION as usize) {
+            stateful_model.update();
         }
     }
     
@@ -433,6 +400,14 @@ mod tests {
         TRXModule::build(max_signal_levels, signal_levels)
             .unwrap_or_else(|error| panic!("{}", error))
            
+    }
+    
+    fn indicator_malware() -> Malware {
+        Malware::new(
+            STEP_DURATION * 10, 
+            MalwareType::Indicator,
+            true,
+        )
     }
 
 
@@ -496,7 +471,7 @@ mod tests {
         let mut best_signal_levels = HashMap::new();
 
         for drone in &drones {
-            CellularAutomaton::try_set_better_signal_level(
+            StatefulModel::try_set_better_signal_level(
                 &command_center,
                 drone, 
                 &mut best_signal_levels, 
@@ -544,9 +519,10 @@ mod tests {
 
     #[test]
     fn spread_infection_in_star() {
+        let indicator_malware = indicator_malware();
         let vulnerable_device_builder = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_vulnerabilities(&[indicator_malware])
             .set_trx_system(TRXSystem::Color(drone_trx_module()));
         
         // Network topology:
@@ -570,9 +546,8 @@ mod tests {
         let vulnerable_drone_id = vulnerable_drone.id();
 
         let mut devices = [command_center, infected_drone, vulnerable_drone];
-        // We need to manually set all rx signal levels to GREEN because in 
-        // `CellularAutomaton` signal level changes happen non-
-        // deterministically.
+        // We need to manually set all rx signal levels to GREEN because here
+        // signal level changes happen non-deterministically.
         for device in &mut devices {
             device.set_rx_signal_level(
                 GREEN_SIGNAL_LEVEL,
@@ -585,12 +560,12 @@ mod tests {
                 command_center_id,
                 infected_drone_id,
                 0, 
-                MessageType::Infection(InfectionType::Indicator)
+                MessageType::Malware(indicator_malware)
             ),
         ));
         let device_map = IdToDeviceMap::from(devices);
        
-        let mut automaton = CellularAutomaton::new(
+        let mut stateful_model = StatefulModel::new(
             command_center_id, 
             device_map, 
             Vec::new(), 
@@ -599,74 +574,81 @@ mod tests {
         );
 
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!automaton.command_device().is_infected());
+        assert!(!stateful_model.command_device().is_infected());
 
-        automaton.update();
+        stateful_model.update();
         
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!automaton.command_device().is_infected());
+        assert!(!stateful_model.command_device().is_infected());
 
-        wait_for_infection(&mut automaton);
+        wait_for_infection(
+            &mut stateful_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(automaton.command_device().is_infected());
+        assert!(stateful_model.command_device().is_infected());
 
-        wait_for_infection(&mut automaton);
+        wait_for_infection(
+            &mut stateful_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(automaton.command_device().is_infected());
+        assert!(stateful_model.command_device().is_infected());
     }
 
     #[test]
     fn patched_devices_do_not_spread_infection() {
+        let indicator_malware = indicator_malware();
         let trx_system = TRXSystem::Color(drone_trx_module());
         let vulnerable_device_builder = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_vulnerabilities(&[indicator_malware])
             .set_trx_system(trx_system.clone());
         
         // Network topology:
@@ -697,8 +679,8 @@ mod tests {
             vulnerable_drone
         ];
         // We need to manually set all rx signal levels to GREEN because in 
-        // `CellularAutomaton` signal level changes happen non-
-        // deterministically.
+        // `StatefulModel` signal level changes happen non-
+        // statefulerministically.
         for device in &mut devices {
             device.set_rx_signal_level(
                 GREEN_SIGNAL_LEVEL,
@@ -711,12 +693,12 @@ mod tests {
                 patched_command_center_id,
                 infected_drone_id,
                 0, 
-                MessageType::Infection(InfectionType::Indicator)
+                MessageType::Malware(indicator_malware)
             ),
         ));
         let device_map = IdToDeviceMap::from(devices);
        
-        let mut automaton = CellularAutomaton::new(
+        let mut stateful_model = StatefulModel::new(
             patched_command_center_id, 
             device_map, 
             Vec::new(), 
@@ -725,73 +707,80 @@ mod tests {
         );
 
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!automaton.command_device().is_infected());
+        assert!(!stateful_model.command_device().is_infected());
 
-        automaton.update();
+        stateful_model.update();
         
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!automaton.command_device().is_infected());
+        assert!(!stateful_model.command_device().is_infected());
 
-        wait_for_infection(&mut automaton);
+        wait_for_infection(
+            &mut stateful_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!automaton.command_device().is_infected());
+        assert!(!stateful_model.command_device().is_infected());
 
-        wait_for_infection(&mut automaton);
+        wait_for_infection(
+            &mut stateful_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!automaton.command_device().is_infected());
+        assert!(!stateful_model.command_device().is_infected());
     }
 
     #[test]
     fn spread_infection_in_mesh() {
+        let indicator_malware = indicator_malware();
         let vulnerable_device_builder = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_vulnerabilities(&[indicator_malware])
             .set_trx_system(TRXSystem::Color(drone_trx_module()));
         
         // Network Edges:
@@ -839,8 +828,8 @@ mod tests {
             vulnerable_drone3,
         ];
         // We need to manually set all rx signal levels to GREEN because in 
-        // `CellularAutomaton` signal level changes happen non-
-        // deterministically.
+        // `StatefulModel` signal level changes happen non-
+        // statefulerministically.
         for device in &mut devices {
             device.set_rx_signal_level(
                 GREEN_SIGNAL_LEVEL,
@@ -853,11 +842,11 @@ mod tests {
                 command_center_id,
                 infected_drone_id,
                 0, 
-                MessageType::Infection(InfectionType::Indicator)
+                MessageType::Malware(indicator_malware)
             ),
         ));
         
-        let mut automaton = CellularAutomaton::new(
+        let mut stateful_model = StatefulModel::new(
             command_center_id, 
             IdToDeviceMap::from(devices), 
             Vec::new(), 
@@ -866,85 +855,88 @@ mod tests {
         );
 
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id1)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id2)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id3)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!automaton.command_device().is_infected());
+        assert!(!stateful_model.command_device().is_infected());
 
-        automaton.update();       
+        stateful_model.update();       
         
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id1)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id2)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !automaton.device_map
+            !stateful_model.device_map
                 .get(&vulnerable_drone_id3)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!automaton.command_device().is_infected());
+        assert!(!stateful_model.command_device().is_infected());
 
-        wait_for_infection(&mut automaton);
+        wait_for_infection(
+            &mut stateful_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&vulnerable_drone_id1)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&vulnerable_drone_id2)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            automaton.device_map
+            stateful_model.device_map
                 .get(&vulnerable_drone_id3)
                 .unwrap()
                 .is_infected()
         );
-        assert!(automaton.command_device().is_infected());
+        assert!(stateful_model.command_device().is_infected());
     }
 }

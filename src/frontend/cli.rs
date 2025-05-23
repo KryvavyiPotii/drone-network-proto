@@ -1,8 +1,9 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
-use crate::device::Topology;
-use crate::device::networkmodel::NetworkModelType;
-use crate::examples;
+use crate::backend::device::Topology;
+use crate::backend::device::networkmodel::NetworkModelType;
+
+use super::examples;
 
 
 const ARG_DISPLAY_DELAYLESS_NETWORK: &str = "display delayless network";
@@ -15,6 +16,7 @@ const ARG_SC_MOVEMENT: &str      = "signal color movement";
 const ARG_PLOT_CAPTION: &str     = "plot caption";
 
 const EXP_COMMAND_DELAYS: &str  = "delays";
+const EXP_DOS: &str             = "dos";
 const EXP_GPS_AND_CONTROL: &str = "control";
 const EXP_GPS_ONLY: &str        = "gps";
 const EXP_GPS_SPOOFING: &str    = "gpsspoof";
@@ -24,9 +26,9 @@ const EXP_INFECTION: &str       = "infection";
 const INF_INDICATOR: &str = "indicator";
 const INF_JAMMING: &str   = "jamming";
 
-const NM_CELLULAR_AUTOMATON: &str = "ca";
-const NM_COMPLEX_NETWORK: &str    = "cn";
-const CN_DELAY_MULTIPLIER: &str = "delay multiplier";
+const NM_STATEFUL: &str    = "sf";
+const NM_STATELESS: &str   = "sl";
+const SLNM_DELAY_MULTIPLIER: &str = "delay multiplier";
 
 const TOPOLOGY_MESH: &str = "mesh";
 const TOPOLOGY_STAR: &str = "star";
@@ -37,7 +39,7 @@ const DEFAULT_PLOT_CAPTION:     &str = "";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.11.0")
+        .version("0.12.0")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
@@ -70,6 +72,7 @@ pub fn cli() {
                 .requires_if(EXP_INFECTION, ARG_INFECTION_TYPE)
                 .value_parser([
                     EXP_COMMAND_DELAYS,
+                    EXP_DOS,
                     EXP_GPS_AND_CONTROL,
                     EXP_GPS_ONLY,
                     EXP_GPS_SPOOFING,
@@ -82,11 +85,11 @@ pub fn cli() {
             Arg::new(ARG_NETWORK_MODEL)
                 .short('m')
                 .long("network-model")
-                .value_parser([NM_CELLULAR_AUTOMATON, NM_COMPLEX_NETWORK])
+                .value_parser([NM_STATELESS, NM_STATEFUL])
                 .help("Choose network model")
         )
         .arg(
-            Arg::new(CN_DELAY_MULTIPLIER)
+            Arg::new(SLNM_DELAY_MULTIPLIER)
                 .short('d')
                 .long("delay-multiplier")
                 .value_parser(clap::value_parser!(f32))
@@ -129,7 +132,7 @@ fn handle_arguments(matches: &ArgMatches) {
     if let Some(example_number) = matches.get_one::<u8>(ARG_EXAMPLE_NUMBER) {
         run_example_by_number(*example_number);
         return;
-    };
+    }
     
     let Some(experiment_title) = matches
         .get_one::<String>(ARG_EXPERIMENT_TITLE)
@@ -148,13 +151,15 @@ fn handle_arguments(matches: &ArgMatches) {
         .unwrap()
         .as_str()
     {
-        NM_CELLULAR_AUTOMATON => NetworkModelType::CellularAutomaton,
-        NM_COMPLEX_NETWORK => {
+        NM_STATEFUL  => { 
+            NetworkModelType::Stateful
+        },
+        NM_STATELESS => {
             let delay_multiplier = matches
-                .get_one::<f32>(CN_DELAY_MULTIPLIER)
+                .get_one::<f32>(SLNM_DELAY_MULTIPLIER)
                 .unwrap();
 
-            NetworkModelType::ComplexNetwork(*delay_multiplier)
+            NetworkModelType::Stateless(*delay_multiplier)
         },
         _ => return,
     };
@@ -177,6 +182,7 @@ fn handle_arguments(matches: &ArgMatches) {
 
     match experiment_title.as_str() {
         EXP_COMMAND_DELAYS  => examples::command_delay(&config),
+        EXP_DOS             => examples::dos(&config),
         EXP_GPS_AND_CONTROL => examples::gps_and_control(&config),
         EXP_GPS_ONLY        => examples::gps_only(&config),
         EXP_GPS_SPOOFING    => examples::gps_spoofing(&config),
@@ -209,150 +215,182 @@ fn run_example_by_number(example_number: u8) {
     match example_number {
         1  => examples::gps_only(
             &Config::new(
-                "Complex network (Star)",
+                "Stateless Model (Star)",
                 false,
-                NetworkModelType::ComplexNetwork(0.0),
+                NetworkModelType::Stateless(0.0),
                 Topology::Star
             )
         ),
         2  => examples::gps_and_control(
             &Config::new(
-                "Complex network (Star)",
+                "Stateless Model (Star)",
                 false,
-                NetworkModelType::ComplexNetwork(0.0),
+                NetworkModelType::Stateless(0.0),
                 Topology::Star
             )
         ),
         3  => examples::command_delay(
             &Config::new(
-                "Complex network (Star)",
+                "Stateless Model (Star)",
                 true,
-                NetworkModelType::ComplexNetwork(1.0),
+                NetworkModelType::Stateless(1.0),
                 Topology::Star
             )
         ),
         4  => examples::signal_color(
             &Config::new(
-                "Complex network (Star)",
+                "Stateless Model (Star)",
                 false,
-                NetworkModelType::ComplexNetwork(0.0),
+                NetworkModelType::Stateless(0.0),
                 Topology::Star
             )
         ),
         5  => examples::infection(
             &Config::new(
-                "Complex network (Star)",
+                "Stateless Model (Star)",
                 false,
-                NetworkModelType::ComplexNetwork(0.0),
+                NetworkModelType::Stateless(1.0),
                 Topology::Star
             )
         ),
-        6  => examples::gps_only(
+        6  => examples::dos(
             &Config::new(
-                "Complex network (Mesh)",
+                "Stateless Model (Star)",
                 false,
-                NetworkModelType::ComplexNetwork(0.0),
+                NetworkModelType::Stateless(1.0),
+                Topology::Star
+            )
+        ),
+        7  => examples::gps_only(
+            &Config::new(
+                "Stateless Model (Mesh)",
+                false,
+                NetworkModelType::Stateless(0.0),
                 Topology::Mesh
             )
         ),
-        7  => examples::gps_and_control(
+        8  => examples::gps_and_control(
             &Config::new(
-                "Complex network (Mesh)",
+                "Stateless Model (Mesh)",
                 false,
-                NetworkModelType::ComplexNetwork(0.0),
+                NetworkModelType::Stateless(0.0),
                 Topology::Mesh
             )
         ),
-        8  => examples::command_delay(
+        9  => examples::command_delay(
             &Config::new(
-                "Complex network (Mesh)",
+                "Stateless Model (Mesh)",
                 true,
-                NetworkModelType::ComplexNetwork(1.0),
+                NetworkModelType::Stateless(1.0),
                 Topology::Mesh
             )
         ),
-        9  => examples::signal_color(
+        10 => examples::signal_color(
             &Config::new(
-                "Complex network (Mesh)",
+                "Stateless Model (Mesh)",
                 false,
-                NetworkModelType::ComplexNetwork(0.0),
+                NetworkModelType::Stateless(0.0),
                 Topology::Mesh
             )
         ),
-        10 => examples::infection(
+        11 => examples::infection(
             &Config::new(
-                "Complex network (Mesh)",
+                "Stateless Model (Mesh)",
                 false,
-                NetworkModelType::ComplexNetwork(25.0),
+                NetworkModelType::Stateless(1.0),
                 Topology::Mesh
             )
         ),
-        11 => examples::gps_only(
+        12 => examples::dos(
             &Config::new(
-                "Cellular automaton (Star)",
+                "Stateless Model (Mesh)",
                 false,
-                NetworkModelType::CellularAutomaton,
+                NetworkModelType::Stateless(1.0),
+                Topology::Mesh
+            )
+        ),
+        13 => examples::gps_only(
+            &Config::new(
+                "Stateful Model (Star)",
+                false,
+                NetworkModelType::Stateful,
                 Topology::Star
             )
         ),
-        12 => examples::gps_and_control(
+        14 => examples::gps_and_control(
             &Config::new(
-                "Cellular automaton (Star)",
+                "Stateful Model (Star)",
                 false,
-                NetworkModelType::CellularAutomaton,
+                NetworkModelType::Stateful,
                 Topology::Star
             )
         ),
-        13 => examples::signal_color(
+        15 => examples::signal_color(
             &Config::new(
-                "Cellular automaton (Star)",
+                "Stateful Model (Star)",
                 false,
-                NetworkModelType::CellularAutomaton,
+                NetworkModelType::Stateful,
                 Topology::Star
             )
         ),
-        14 => examples::infection(
+        16 => examples::infection(
             &Config::new(
-                "Cellular automaton (Star)",
+                "Stateful Model (Star)",
                 false,
-                NetworkModelType::CellularAutomaton,
+                NetworkModelType::Stateful,
                 Topology::Star
             )
         ),
-        15 => examples::gps_only(
+        17 => examples::dos(
             &Config::new(
-                "Cellular automaton (Mesh)",
+                "Stateful Model (Star)",
                 false,
-                NetworkModelType::CellularAutomaton,
+                NetworkModelType::Stateful,
+                Topology::Star
+            )
+        ),
+        18 => examples::gps_only(
+            &Config::new(
+                "Stateful Model (Mesh)",
+                false,
+                NetworkModelType::Stateful,
                 Topology::Mesh
             )
         ),
-        16 => examples::gps_and_control(
+        19 => examples::gps_and_control(
             &Config::new(
-                "Cellular automaton (Mesh)",
+                "Stateful Model (Mesh)",
                 false,
-                NetworkModelType::CellularAutomaton,
+                NetworkModelType::Stateful,
                 Topology::Mesh
             )
         ),
-        17 => examples::signal_color(
+        20 => examples::signal_color(
             &Config::new(
-                "Cellular automaton (Mesh)",
+                "Stateful Model (Mesh)",
                 false,
-                NetworkModelType::CellularAutomaton,
+                NetworkModelType::Stateful,
                 Topology::Mesh
             )
         ),
-        18 => examples::infection(
+        21 => examples::infection(
             &Config::new(
-                "Cellular automaton (Mesh)",
+                "Stateful Model (Mesh)",
                 false,
-                NetworkModelType::CellularAutomaton,
+                NetworkModelType::Stateful,
+                Topology::Mesh
+            )
+        ),
+        22 => examples::dos(
+            &Config::new(
+                "Stateful Model (Mesh)",
+                false,
+                NetworkModelType::Stateful,
                 Topology::Mesh
             )
         ),
         _ => ()
-        }
+    }
 }
 
 
@@ -388,17 +426,16 @@ impl Config {
     #[must_use]
     pub fn antenna(&self) -> AntennaType {
         match self.network_model {
-            NetworkModelType::CellularAutomaton => AntennaType::Color,
-            NetworkModelType::ComplexNetwork(_) => AntennaType::Strength,
+            NetworkModelType::Stateful     => AntennaType::Color,
+            NetworkModelType::Stateless(_) => AntennaType::Strength,
         }
     }
 
     #[must_use]
     pub fn delay_multiplier(&self) -> f32 {
         match self.network_model {
-            NetworkModelType::ComplexNetwork(delay_multiplier) =>
-                delay_multiplier,
-            NetworkModelType::CellularAutomaton => 0.0
+            NetworkModelType::Stateful                    => 0.0,
+            NetworkModelType::Stateless(delay_multiplier) => delay_multiplier,
         }
     }
 }

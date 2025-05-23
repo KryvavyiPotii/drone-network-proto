@@ -2,11 +2,11 @@ use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use log::{info, trace};
 
-use crate::device::STEP_DURATION;
-use crate::device::networkmodel::NetworkModel;
-use crate::mathphysics::Millisecond;
+use crate::backend::device::STEP_DURATION;
+use crate::backend::device::networkmodel::NetworkModel;
+use crate::backend::mathphysics::Millisecond;
 
-use self::renderer::PlottersRenderer;
+use renderer::PlottersRenderer;
 
 
 pub mod renderer;
@@ -44,9 +44,8 @@ fn log_device_count(network_models: &[NetworkModel]) -> String {
 
 
 pub struct Simulation<'a> {
-    start_time_in_millis: Millisecond,
-    end_time_in_millis: Millisecond,
-    current_time_in_millis: Millisecond,
+    current_time: Millisecond,
+    end_time: Millisecond,
     network_models: Vec<NetworkModel>,
     renderer: PlottersRenderer<'a>
 }
@@ -54,15 +53,13 @@ pub struct Simulation<'a> {
 impl<'a> Simulation<'a> {
     #[must_use]
     pub fn new(
-        start_time_in_millis: Millisecond, 
-        end_time_in_millis: Millisecond,
+        end_time: Millisecond,
         network_models: Vec<NetworkModel>,
         renderer: PlottersRenderer<'a>
     ) -> Self {
         Self {
-            start_time_in_millis,
-            end_time_in_millis,
-            current_time_in_millis: start_time_in_millis,
+            current_time: 0,
+            end_time,
             network_models,
             renderer
         }
@@ -74,15 +71,14 @@ impl<'a> Simulation<'a> {
     pub fn run(&mut self) {
         let running = set_ctrlc_handler(); 
 
-        let begin = self.start_time_in_millis;
-        let end = self.end_time_in_millis;
+        let end = self.end_time;
 
         info!("Output filename: {}", self.renderer.output_filename());
-        for _ in (begin..end).step_by(STEP_DURATION as usize) {
+        for _ in (0..end).step_by(STEP_DURATION as usize) {
             if !running.load(std::sync::atomic::Ordering::SeqCst) { 
                 info!(
                     "TERM, Simulation, Time: {}, {}", 
-                    self.current_time_in_millis,
+                    self.current_time,
                     log_device_count(&self.network_models)
                 );
                 return;
@@ -98,15 +94,12 @@ impl<'a> Simulation<'a> {
                         
             trace!(
                 "Current time: {}, {}", 
-                self.current_time_in_millis,
+                self.current_time,
                 log_device_count(&self.network_models)
             );
-            self.current_time_in_millis += STEP_DURATION;
+            self.current_time += STEP_DURATION;
         }
 
-        info!(
-            "Simulation finished at {} millis",
-            self.current_time_in_millis
-        );
+        info!("Simulation finished at {} millis", self.current_time);
     }
 }

@@ -6,13 +6,14 @@ use plotters::prelude::*;
 use plotters::style::RGBColor;
 use thiserror::Error;
 
-use crate::signal::{
-    SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
+use crate::backend::signal::{
+    SignalLevel, GPS_L1_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
 };
-use crate::device::{Device, DESTINATION_RADIUS, STEP_DURATION};
-use crate::device::networkmodel::{AttackerDevice, AttackType, NetworkModel};
-use crate::mathphysics::{Megahertz, Meter, Point3D, Position};
-use crate::message::Goal;
+use crate::backend::device::{Device, DESTINATION_RADIUS, STEP_DURATION};
+use crate::backend::device::networkmodel::NetworkModel;
+use crate::backend::device::networkmodel::attack::{AttackerDevice, AttackType};
+use crate::backend::mathphysics::{Megahertz, Meter, Point3D, Position};
+use crate::backend::message::Goal;
 
 
 const COMMAND_CENTER_RADIUS: Meter = 5.0;
@@ -126,10 +127,10 @@ fn attacker_device_primitive(
     let point = plotters_point_from_point3d(device_position);
     let attacker_device_coverage = meters_to_pixels(radius, screen_height);
     let area_color = match frequency {
-        GPS_L1_FREQUENCY | GPS_L2_FREQUENCY if spoofs_gps => ORANGE,
-        GPS_L1_FREQUENCY | GPS_L2_FREQUENCY               => RED,
-        WIFI_2_4GHZ_FREQUENCY                             => BLUE,
-        _                                                 => GREY
+        GPS_L1_FREQUENCY if spoofs_gps => ORANGE,
+        GPS_L1_FREQUENCY               => RED,
+        WIFI_2_4GHZ_FREQUENCY          => BLUE,
+        _                              => GREY
     };
 
     Circle::new(point, attacker_device_coverage, area_color)

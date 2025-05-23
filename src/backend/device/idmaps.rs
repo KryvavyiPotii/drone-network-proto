@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::collections::hash_map::{Iter, IterMut, Keys, Values, ValuesMut};
 
-use crate::device::{Device, DeviceId};
-use crate::mathphysics::Megahertz;
-use crate::message::Goal;
-use crate::signal::{SignalLevel, NO_SIGNAL_LEVEL};
+use crate::backend::mathphysics::Megahertz;
+use crate::backend::message::Goal;
+use crate::backend::signal::{SignalLevel, NO_SIGNAL_LEVEL};
+
+use super::{Device, DeviceId};
 
 
 pub type IdToLevelMap = HashMap<DeviceId, SignalLevel>;
@@ -238,9 +239,9 @@ impl<const N: usize> From<[Device; N]> for IdToDeviceMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::device::{DeviceBuilder, TRXSystem};
-    use crate::device::systems::TRXModule;
-    use crate::signal::{GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL};
+    use crate::backend::device::{DeviceBuilder, TRXSystem};
+    use crate::backend::device::systems::TRXModule;
+    use crate::backend::signal::{GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL};
 
     use super::*;
 

@@ -1,15 +1,14 @@
 # drone-network
 
-A trait that aims to model a network of drones.
+A crate that aims to model a UAV networks and the impact of electronic warfare and malware on them.
 
-## Render legend
+## Render image legend
 
-* Green zone - command center.
-* Yellow zone - destination position.
-* Red zone - GPS signal suppression.
-  On contact a drone loses its global position and moves in the same horizontal direction in which he moved before the contact.
-* Blue zone - control signal suppression.
-  On contact a drone is disconnected from the swarm.
+* Green circle - command center transmission area.
+* Yellow circle - destination point.
+* Red circle - GPS electronic warfare device transmission area.
+  On contact a drone loses its global position and moves in the same horizontal direction in which it moved before the contact.
+* Blue circle - transmission area of electronic warfare device that suppresses control signal.
 
 ## Usage
 
@@ -25,9 +24,9 @@ Options:
   -e, --example <example number>
           Run an experiment by its number
   -x, --experiment <experiment title>
-          Choose experiment title [possible values: delays, control, gps, gpsspoof, infection, signals]
+          Choose experiment title [possible values: delays, dos, control, gps, gpsspoof, infection, signals]
   -m, --network-model <network model>
-          Choose network model [possible values: ca, cn]
+          Choose network model [possible values: sl, sf]
   -d, --delay-multiplier <delay multiplier>
           Set communication delay for complex network model [default: 0.0]
   -t, --topology <network topology>

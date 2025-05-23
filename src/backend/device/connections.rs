@@ -9,13 +9,16 @@ use rustworkx_core::centrality::betweenness_centrality;
 use rustworkx_core::dictmap::DictMap;
 use rustworkx_core::shortest_path::{astar, dijkstra};
 
-use crate::device::{Device, DeviceId, STEP_DURATION};
-use crate::device::{IdToDeviceMap, IdToLevelMap};
-use crate::mathphysics::{
+use crate::backend::mathphysics::{
     kmps_to_mpms, time_in_millis_from_distance_and_speed, Megahertz, Meter, 
     Millisecond, Position, SPEED_OF_LIGHT
 };
-use crate::message::infection::{InfectionState, InfectionType};
+use crate::backend::malware::{InfectionState, Malware};
+
+
+use super::{
+    Device, DeviceId, STEP_DURATION, IdToDeviceMap, IdToLevelMap
+};
 
 
 pub type DelaySnapshot = HashMap<DeviceId, i32>;
@@ -361,12 +364,12 @@ impl ConnectionGraph {
                 self.0.add_edge(command_device_node, node, distance);
                 
                 connected = true;
-            };
+            }
             if device.transmits_at(distance, frequency) {
                 let node = self.0.add_node(device.id());
                 
                 self.0.add_edge(node, command_device_node, distance);
-            };
+            }
         }
 
         connected
@@ -525,12 +528,10 @@ impl ConnectionGraph {
             )
             .collect();
 
-        let diameter = shortest_paths
+        shortest_paths
             .iter()
             .flat_map(|dictmap| dictmap.values())
-            .fold(0f32, |a, &b| a.max(b));
-        
-        diameter
+            .fold(0f32, |a, &b| a.max(b))
     }
 
     #[must_use]
@@ -548,7 +549,7 @@ impl ConnectionGraph {
         &self, 
         command_device_id: DeviceId,
         device_map: &IdToDeviceMap,
-        infection_type: &InfectionType
+        malware: &Malware
     ) -> HashMap<DeviceId, f32> {
         let Some(command_device) = device_map.get(&command_device_id) else {
             return HashMap::new() 
@@ -560,7 +561,7 @@ impl ConnectionGraph {
         let percolation_states = self.percolation_states(
             command_device, 
             device_map,
-            *infection_type
+            malware
         );
         let percolation_sum = percolation_states
             .values()
@@ -597,16 +598,14 @@ impl ConnectionGraph {
         &self,
         command_device: &Device,
         device_map: &IdToDeviceMap,
-        infection_type: InfectionType
+        malware: &Malware
     ) -> HashMap<DeviceId, f32> {
         let mut percolation_states: HashMap<DeviceId, f32> = self.0
             .nodes()
             .map(|node| {
                 let percolation_state = match device_map.get(&node) {
                     Some(drone) => {
-                        let infection_state = *drone.infection_state(
-                            &infection_type
-                        );
+                        let infection_state = *drone.infection_state(malware);
 
                         percolation_state_from_infection_state(
                             infection_state
@@ -749,11 +748,12 @@ impl Default for ConnectionGraph {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::device::{Device, DeviceBuilder, UNKNOWN_ID};
-    use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
-    use crate::mathphysics::{Point3D, PowerUnit};
-    use crate::message::{Message, MessageType};
-    use crate::signal::{
+    use crate::backend::device::{Device, DeviceBuilder, UNKNOWN_ID};
+    use crate::backend::device::systems::{PowerSystem, TRXModule, TRXSystem};
+    use crate::backend::malware::{Malware, MalwareType};
+    use crate::backend::mathphysics::{Point3D, PowerUnit};
+    use crate::backend::message::{Message, MessageType};
+    use crate::backend::signal::{
         GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, NO_SIGNAL_LEVEL, 
         SignalLevel, SignalArea, WIFI_2_4GHZ_FREQUENCY
     };
@@ -839,13 +839,11 @@ mod tests {
             tx_module: drone_tx_module(), 
             rx_module: drone_rx_module()
         };
-        let vulnerabilities =[InfectionType::Jamming(WIFI_2_4GHZ_FREQUENCY)];
         
         DeviceBuilder::new()
             .set_real_position(position)
             .set_power_system(device_power_system())
             .set_trx_system(trx_system)
-            .set_vulnerabilities(&vulnerabilities)
             .build()
     }
 
@@ -935,6 +933,14 @@ mod tests {
         );
 
         (connections, device_ids)
+    }
+
+    fn jamming_malware(jammed_frequency: Megahertz) -> Malware {
+        Malware::new(
+            0, 
+            MalwareType::Jamming(jammed_frequency),
+            false,
+        )
     }
 
 
@@ -1049,6 +1055,7 @@ mod tests {
     #[test]
     fn percolation_like_in_networkx() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let malware   = jamming_malware(frequency);
  
         // Network:
         //                      D
@@ -1072,12 +1079,34 @@ mod tests {
             .build();
         let command_center_id = command_center.id();
         
+        let drone_trx_system = TRXSystem::Strength { 
+            tx_module: drone_tx_module(), 
+            rx_module: drone_rx_module()
+        };
+        
+        let vulnerable_drone_builder = DeviceBuilder::new()
+            .set_power_system(device_power_system())
+            .set_trx_system(drone_trx_system)
+            .set_vulnerabilities(&[malware]);
+            
         let mut devices = [
             command_center,
-            drone_with_trx_system_set(Point3D::new(7.0, 0.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(14.0, 0.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(16.0, 7.0, 0.0)),
-            drone_with_trx_system_set(Point3D::new(16.0, -7.0, 0.0)),
+            vulnerable_drone_builder
+                .clone()
+                .set_real_position(Point3D::new(7.0, 0.0, 0.0))
+                .build(),
+            vulnerable_drone_builder
+                .clone()
+                .set_real_position(Point3D::new(14.0, 0.0, 0.0))
+                .build(),
+            vulnerable_drone_builder
+                .clone()
+                .set_real_position(Point3D::new(16.0, 7.0, 0.0))
+                .build(),
+            vulnerable_drone_builder
+                .clone()
+                .set_real_position(Point3D::new(16.0, -7.0, 0.0))
+                .build(),
         ];
         let drone_b_id = devices[1].id();
         let drone_c_id = devices[2].id();
@@ -1092,13 +1121,13 @@ mod tests {
             UNKNOWN_ID, 
             drone_b_id, 
             0, 
-            MessageType::Infection(InfectionType::Jamming(frequency))
+            MessageType::Malware(malware)
         );
         let infection_message_for_c = Message::new(
             UNKNOWN_ID, 
             drone_c_id, 
             0, 
-            MessageType::Infection(InfectionType::Jamming(frequency))
+            MessageType::Malware(malware)
         );
 
         assert!(
@@ -1135,7 +1164,7 @@ mod tests {
             .percolation_centrality(
                 command_center_id,
                 &device_map,
-                &InfectionType::Jamming(frequency)
+                &malware
             )
             .iter()
             .map(|(node, percolation)| 

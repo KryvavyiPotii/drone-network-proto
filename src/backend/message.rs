@@ -7,39 +7,39 @@ use impl_ops::{
     _impl_binary_op_owned_owned, _parse_binary_op, impl_op, impl_op_ex
 };
 
-use crate::device::DeviceId; 
-use crate::mathphysics::{Millisecond, Point3D};
-
-use self::infection::InfectionType;
+use super::device::DeviceId; 
+use super::malware::{Malware, MalwareType};
+use super::mathphysics::{Millisecond, Point3D};
 
 
 pub use queue::MessageQueue;
 
 
-pub mod infection;
 pub mod queue;
 
 
 const GPS_COST: MessageCost           = MessageCost(3.0);
-const INF_INDICATOR_COST: MessageCost = MessageCost(1.0);
-const INF_JAMMING_COST: MessageCost   = MessageCost(2.0);
+const MAL_INDICATOR_COST: MessageCost = MessageCost(1.0);
+const MAL_JAMMING_COST: MessageCost   = MessageCost(2.0);
+const MAL_DOS_COST: MessageCost       = MessageCost(1.0);
 const SET_GOAL_COST: MessageCost      = MessageCost(5.0); 
 
 
 fn message_transmission_cost(message_type: &MessageType) -> MessageCost {
     match message_type {
-        MessageType::GPS(_)                    => GPS_COST,
-        MessageType::Infection(infection_type) => infection_transmission_cost(
-            infection_type
+        MessageType::GPS(_)           => GPS_COST,
+        MessageType::Malware(malware) => malware_transmission_cost(
+            *malware.malware_type()
         ),
-        MessageType::SetGoal(_)                => SET_GOAL_COST,
+        MessageType::SetGoal(_)       => SET_GOAL_COST,
     }
 }
 
-fn infection_transmission_cost(infection_type: &InfectionType) -> MessageCost {
-    match infection_type {
-        InfectionType::Indicator  => INF_INDICATOR_COST,
-        InfectionType::Jamming(_) => INF_JAMMING_COST
+fn malware_transmission_cost(malware_type: MalwareType) -> MessageCost {
+    match malware_type {
+        MalwareType::DoS(_)     => MAL_DOS_COST, 
+        MalwareType::Indicator  => MAL_INDICATOR_COST,
+        MalwareType::Jamming(_) => MAL_JAMMING_COST
     }
 }
 
@@ -102,7 +102,7 @@ pub enum Goal {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MessageType {
     GPS(Point3D),
-    Infection(InfectionType),
+    Malware(Malware),
     SetGoal(Goal),
 }
 
@@ -122,7 +122,7 @@ pub struct Message {
     execution_time: Millisecond,
     transmission_cost: MessageCost,
     message_type: MessageType,
-    message_state: MessageState
+    state: MessageState
 }
 
 impl Message {
@@ -139,7 +139,7 @@ impl Message {
             execution_time,
             transmission_cost: message_transmission_cost(&message_type),
             message_type,
-            message_state: MessageState::Waiting,
+            state: MessageState::Waiting,
         }
     }
 
@@ -169,44 +169,59 @@ impl Message {
     }
 
     #[must_use]
-    pub fn message_state(&self) -> &MessageState {
-        &self.message_state
+    pub fn state(&self) -> &MessageState {
+        &self.state
+    }
+
+    #[must_use]
+    pub fn is_gps(&self) -> bool {
+        matches!(self.message_type, MessageType::GPS(_))
+    }
+    
+    #[must_use]
+    pub fn is_malware(&self) -> bool {
+        matches!(self.message_type, MessageType::Malware(_))
+    }
+    
+    #[must_use]
+    pub fn is_set_goal(&self) -> bool {
+        matches!(self.message_type, MessageType::SetGoal(_))
     }
 
     pub fn process(&mut self) {
-        if let MessageState::Waiting = self.message_state {
-            self.message_state = MessageState::InProgress;
+        if let MessageState::Waiting = self.state {
+            self.state = MessageState::InProgress;
         }
     }
 
     pub fn finish(&mut self) {
-        match self.message_state {
+        match self.state {
             MessageState::Waiting | MessageState::InProgress => 
-                self.message_state = MessageState::Finished,
+                self.state = MessageState::Finished,
             MessageState::Finished => ()
         }
     }
 
     #[must_use]
     pub fn is_in_progress(&self) -> bool {
-        matches!(self.message_state, MessageState::InProgress)
+        matches!(self.state, MessageState::InProgress)
     }
 
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        matches!(self.message_state, MessageState::Finished)
+        matches!(self.state, MessageState::Finished)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::device::UNKNOWN_ID;
+    use crate::backend::device::UNKNOWN_ID;
 
     use super::*;
 
 
     fn message_is_waiting(message: &Message) -> bool {
-        matches!(message.message_state(), MessageState::Waiting) 
+        matches!(message.state(), MessageState::Waiting) 
     }
 
 

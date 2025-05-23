@@ -1,7 +1,7 @@
 use thiserror::Error;
 
-use crate::mathphysics::Megahertz;
-use crate::signal::{
+use crate::backend::mathphysics::Megahertz;
+use crate::backend::signal::{
     FreqToLevelMap, NO_SIGNAL_LEVEL, SignalLevel, min_signal_level
 };
 
@@ -106,7 +106,7 @@ impl TRXModule {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::signal::{
+    use crate::backend::signal::{
         GPS_L1_FREQUENCY, RED_SIGNAL_LEVEL, YELLOW_SIGNAL_LEVEL
     };
 

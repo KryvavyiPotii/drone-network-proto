@@ -1,21 +1,23 @@
 use std::collections::hash_map::Values;
 
-use crate::device::{
+use crate::backend::device::{
     ConnectionGraph, DelaySnapshot, Device, DeviceId, FindSignalLevel, 
     IdToDeviceMap, IdToGoalMap, IdToLevelMap, Topology, BROADCAST_ID, 
     STEP_DURATION
 };
-use crate::device::networkmodel::{
-    AttackerDevice, UnicastMessageError,  
-    connect_gps_to_all_devices, enqueue_infection_messages, 
-    process_gps_spoofing, send_gps_messages, 
-    try_multiply_infection_message_from_receivers
-};
-use crate::mathphysics::{Megahertz, Millisecond};
-use crate::message::{Message, MessageQueue, MessageType};
-use crate::signal::{GPS_L1_FREQUENCY, NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY};
+use crate::backend::mathphysics::{Megahertz, Millisecond};
+use crate::backend::message::{Message, MessageQueue, MessageType};
+use crate::backend::signal::{NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY};
 
-use super::{AttackType, MessagePreprocessError, try_preprocess_message};
+use super::attack::{
+    AttackerDevice, AttackType, enqueue_malicious_messages, 
+    process_electronic_warfare, process_gps_spoofing, process_malware,
+    try_multiply_malicious_message_from_receivers,
+};
+use super::msgproc::{
+    MessagePreprocessError, UnicastMessageError, connect_gps_to_all_devices, 
+    send_gps_messages, try_preprocess_message
+};
 
 
 fn set_delays_snapshot_for_message(
@@ -28,7 +30,7 @@ fn set_delays_snapshot_for_message(
     match message.message_type() {
         // Currently (version 0.8.0) GPS data is given without delays.
         MessageType::GPS(_)       => (),
-        MessageType::Infection(_) => { 
+        MessageType::Malware(_) => { 
             let delays_snapshot_from_destination = connections.delays(
                 message.destination_id(), 
                 delay_multiplier
@@ -132,7 +134,7 @@ fn try_finish_message(
     delays_snapshot: &DelaySnapshot,
     message: &mut Message
 ) {
-    if let MessageType::Infection(_) = message.message_type() {
+    if let MessageType::Malware(_) = message.message_type() {
         message.finish();
         return;
     }
@@ -154,7 +156,7 @@ fn process_attack(
     current_time: Millisecond
 ) {
     match attacker_device.attack_type() {
-        AttackType::ElectronicWarfare => 
+        AttackType::ElectronicWarfare             => 
             process_electronic_warfare(device_map, attacker_device.device()),
         AttackType::GPSSpoofing(spoofed_position) => 
             process_gps_spoofing(
@@ -163,20 +165,21 @@ fn process_attack(
                 attacker_device.device(),
                 &spoofed_position,
                 current_time
+            ),
+        AttackType::MalwareDistribution(malware)  =>
+            process_malware(
+                device_map, 
+                message_queue, 
+                attacker_device.device(),
+                &malware,
+                current_time
             )
-    }
-}
-
-fn process_electronic_warfare(device_map: &mut IdToDeviceMap, ewd: &Device) {
-    for device in device_map.devices_mut() {
-        ewd.suppress_signal(device, WIFI_2_4GHZ_FREQUENCY);
-        ewd.suppress_signal(device, GPS_L1_FREQUENCY);
     }
 }
 
 
 #[derive(Clone)]
-pub struct ComplexNetwork {
+pub struct StatelessModel {
     current_time: Millisecond,
     command_device_id: DeviceId,
     device_map: IdToDeviceMap,
@@ -189,7 +192,7 @@ pub struct ComplexNetwork {
     // TODO add control frequency Vec
 }
 
-impl ComplexNetwork {
+impl StatelessModel {
     #[must_use]
     pub fn new(
         command_device_id: DeviceId,
@@ -199,7 +202,7 @@ impl ComplexNetwork {
         topology: Topology,
         delay_multiplier: f32
     ) -> Self {
-        let mut complex_network = Self {
+        let mut stateless_model = Self {
             current_time: 0,
             command_device_id,
             attacker_devices,
@@ -210,9 +213,9 @@ impl ComplexNetwork {
             message_queue: MessageQueue::from(scenario),
         };
 
-        complex_network.set_initial_state();
+        stateless_model.set_initial_state();
 
-        complex_network
+        stateless_model
     }
     
     #[must_use]
@@ -320,9 +323,10 @@ impl ComplexNetwork {
             self.delay_multiplier
         );
 
-        let mut infection_messages = Vec::new();
+        let mut malicious_messages = Vec::new();
 
         for (frequency, message, delays_snapshot) in &mut self.message_queue {
+            // TODO add malware to list
             let preprocess_result = try_preprocess_message(
                 message, 
                 self.current_time
@@ -355,20 +359,20 @@ impl ComplexNetwork {
                 message
             );
 
-            try_multiply_infection_message_from_receivers(
+            let _ = try_multiply_malicious_message_from_receivers(
                 message,
                 *frequency,
                 &receiver_ids,
                 &self.device_map,
                 &self.connections,
-                &mut infection_messages
+                &mut malicious_messages
             );
         }
 
         self.message_queue.remove_finished_messages();
 
-        enqueue_infection_messages(
-            &infection_messages,
+        enqueue_malicious_messages(
+            &malicious_messages,
             &mut self.message_queue,
             &self.device_map,
         );
@@ -401,7 +405,7 @@ impl ComplexNetwork {
     }
 }
 
-impl FindSignalLevel for ComplexNetwork {
+impl FindSignalLevel for StatelessModel {
     fn try_set_better_signal_level(
         tx: &Device,
         rx: &Device,
@@ -431,11 +435,11 @@ impl FindSignalLevel for ComplexNetwork {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::device::{Device, DeviceBuilder};
-    use crate::device::systems::{PowerSystem, TRXModule, TRXSystem};
-    use crate::mathphysics::{Meter, Point3D, PowerUnit};
-    use crate::message::infection::{InfectionType, INFECTION_DELAY};
-    use crate::signal::{
+    use crate::backend::device::{Device, DeviceBuilder};
+    use crate::backend::device::systems::{PowerSystem, TRXModule, TRXSystem};
+    use crate::backend::mathphysics::{Meter, Point3D, PowerUnit};
+    use crate::backend::malware::{Malware, MalwareType};
+    use crate::backend::signal::{
         GREEN_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, RED_SIGNAL_LEVEL, 
         SignalArea, SignalLevel, YELLOW_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
     };
@@ -543,10 +547,21 @@ mod tests {
             .build()
     }
 
-    fn wait_for_infection(network: &mut ComplexNetwork) {
-        for _ in (0..=INFECTION_DELAY).step_by(STEP_DURATION as usize) {
-            network.update();
+    fn wait_for_infection(
+        stateless_model: &mut StatelessModel, 
+        infection_delay: Millisecond
+    ) {
+        for _ in (0..=infection_delay).step_by(STEP_DURATION as usize) {
+            stateless_model.update();
         }
+    }
+    
+    fn indicator_malware() -> Malware {
+        Malware::new(
+            STEP_DURATION * 10, 
+            MalwareType::Indicator,
+            true,
+        )
     }
 
 
@@ -574,7 +589,7 @@ mod tests {
         ]; 
 
         for drone in &drones {
-            ComplexNetwork::try_set_better_signal_level(
+            StatelessModel::try_set_better_signal_level(
                 &command_center,
                 drone, 
                 &mut best_signal_levels, 
@@ -638,7 +653,7 @@ mod tests {
             (devices1[4].id(), GREEN_SIGNAL_LEVEL), 
         ]);
 
-        let network1 = ComplexNetwork::new(
+        let stateless_model1 = StatelessModel::new(
             command_center_id, 
             IdToDeviceMap::from(devices1), 
             Vec::new(), 
@@ -647,7 +662,7 @@ mod tests {
             0.0
         );
 
-        let mut signal_levels1 = network1.device_map.all_rx_signal_levels(
+        let mut signal_levels1 = stateless_model1.device_map.all_rx_signal_levels(
             WIFI_2_4GHZ_FREQUENCY
         );
         signal_levels1.retain(|device_id, _| *device_id != command_center_id); 
@@ -680,7 +695,7 @@ mod tests {
             (devices2[3].id(), RED_SIGNAL_LEVEL), 
         ]);
 
-        let network2 = ComplexNetwork::new(
+        let stateless_model2 = StatelessModel::new(
             command_center_id, 
             IdToDeviceMap::from(devices2), 
             Vec::new(), 
@@ -689,7 +704,7 @@ mod tests {
             0.0
         );
 
-        let mut signal_levels2 = network2.device_map.all_rx_signal_levels(
+        let mut signal_levels2 = stateless_model2.device_map.all_rx_signal_levels(
             WIFI_2_4GHZ_FREQUENCY
         );
         signal_levels2.retain(|device_id, _| *device_id != command_center_id); 
@@ -738,7 +753,7 @@ mod tests {
             (devices[4].id(), YELLOW_SIGNAL_LEVEL), // Black in Star topology 
         ]);
 
-        let network = ComplexNetwork::new(
+        let stateless_model = StatelessModel::new(
             command_center_id, 
             IdToDeviceMap::from(devices), 
             Vec::new(), 
@@ -747,7 +762,7 @@ mod tests {
             0.0
         );
 
-        let mut signal_levels = network.device_map.all_rx_signal_levels(
+        let mut signal_levels = stateless_model.device_map.all_rx_signal_levels(
             WIFI_2_4GHZ_FREQUENCY
         );
         signal_levels.retain(|device_id, _| *device_id != command_center_id); 
@@ -762,9 +777,10 @@ mod tests {
 
     #[test]
     fn spread_infection_in_star() {
+        let indicator_malware = indicator_malware();
         let vulnerable_device_builder = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_vulnerabilities(&[indicator_malware])
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(),
@@ -804,12 +820,12 @@ mod tests {
                 command_center_id,
                 infected_drone_id,
                 0, 
-                MessageType::Infection(InfectionType::Indicator)
+                MessageType::Malware(indicator_malware)
             ),
         ));
         let device_map = IdToDeviceMap::from(devices);
        
-        let mut network = ComplexNetwork::new(
+        let mut stateless_model = StatelessModel::new(
             command_center_id, 
             device_map, 
             Vec::new(), 
@@ -819,70 +835,77 @@ mod tests {
         );
 
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network.command_device().is_infected());
+        assert!(!stateless_model.command_device().is_infected());
 
-        network.update();
+        stateless_model.update();
         
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network.command_device().is_infected());
+        assert!(!stateless_model.command_device().is_infected());
 
-        wait_for_infection(&mut network);
+        wait_for_infection(
+            &mut stateless_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(network.command_device().is_infected());
+        assert!(stateless_model.command_device().is_infected());
 
-        wait_for_infection(&mut network);
+        wait_for_infection(
+            &mut stateless_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(network.command_device().is_infected());
+        assert!(stateless_model.command_device().is_infected());
     }
 
     #[test]
     fn patched_devices_do_not_spread_infection() {
+        let indicator_malware = indicator_malware();
         let trx_system = TRXSystem::Strength { 
             tx_module: drone_tx_module(),
             rx_module: drone_rx_module() 
@@ -890,7 +913,7 @@ mod tests {
 
         let vulnerable_device_builder = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_vulnerabilities(&[indicator_malware])
             .set_trx_system(trx_system.clone());
         
         // Network topology:
@@ -930,12 +953,12 @@ mod tests {
                 patched_command_center_id,
                 infected_drone_id,
                 0, 
-                MessageType::Infection(InfectionType::Indicator)
+                MessageType::Malware(indicator_malware)
             ),
         ));
         let device_map = IdToDeviceMap::from(devices);
        
-        let mut network = ComplexNetwork::new(
+        let mut stateless_model = StatelessModel::new(
             patched_command_center_id, 
             device_map, 
             Vec::new(), 
@@ -945,74 +968,81 @@ mod tests {
         );
 
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network.command_device().is_infected());
+        assert!(!stateless_model.command_device().is_infected());
 
-        network.update();
+        stateless_model.update();
         
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network.command_device().is_infected());
+        assert!(!stateless_model.command_device().is_infected());
 
-        wait_for_infection(&mut network);
+        wait_for_infection(
+            &mut stateless_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network.command_device().is_infected());
+        assert!(!stateless_model.command_device().is_infected());
 
-        wait_for_infection(&mut network);
+        wait_for_infection(
+            &mut stateless_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network.command_device().is_infected());
+        assert!(!stateless_model.command_device().is_infected());
     }
 
 
     #[test]
     fn spread_infection_in_mesh() {
+        let indicator_malware = indicator_malware();
         let vulnerable_device_builder = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_vulnerabilities(&[InfectionType::Indicator])
+            .set_vulnerabilities(&[indicator_malware])
             .set_trx_system(
                 TRXSystem::Strength { 
                     tx_module: drone_tx_module(),
@@ -1074,11 +1104,11 @@ mod tests {
                 command_center_id,
                 infected_drone_id,
                 0, 
-                MessageType::Infection(InfectionType::Indicator)
+                MessageType::Malware(indicator_malware)
             ),
         ));
         
-        let mut network = ComplexNetwork::new(
+        let mut stateless_model = StatelessModel::new(
             command_center_id, 
             IdToDeviceMap::from(devices), 
             Vec::new(), 
@@ -1088,85 +1118,88 @@ mod tests {
         );
 
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id1)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id2)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id3)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network.command_device().is_infected());
+        assert!(!stateless_model.command_device().is_infected());
 
-        network.update();       
+        stateless_model.update();       
         
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id1)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id2)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            !network.device_map
+            !stateless_model.device_map
                 .get(&vulnerable_drone_id3)
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network.command_device().is_infected());
+        assert!(!stateless_model.command_device().is_infected());
 
-        wait_for_infection(&mut network);
+        wait_for_infection(
+            &mut stateless_model, 
+            indicator_malware.infection_delay()
+        );
 
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&infected_drone_id)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&vulnerable_drone_id1)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&vulnerable_drone_id2)
                 .unwrap()
                 .is_infected()
         );
         assert!(
-            network.device_map
+            stateless_model.device_map
                 .get(&vulnerable_drone_id3)
                 .unwrap()
                 .is_infected()
         );
-        assert!(network.command_device().is_infected());
+        assert!(stateless_model.command_device().is_infected());
     }
 }

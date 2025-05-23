@@ -7,8 +7,9 @@ use impl_ops::{
     _impl_binary_op_owned_owned, _parse_binary_op, impl_op, impl_op_ex
 };
 
-use crate::message::MessageCost;
-use crate::signal::{
+use crate::backend::message::MessageCost;
+
+use super::{
     GREEN_SIGNAL_ZONE_COEFFICIENT, YELLOW_SIGNAL_ZONE_COEFFICIENT
 };
 

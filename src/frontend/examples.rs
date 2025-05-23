@@ -3,25 +3,27 @@ use std::ops::Range;
 
 use rand::prelude::*;
 
-use crate::cli::{AntennaType, Config};
-use crate::device::{
+use crate::backend::device::{
     BROADCAST_ID, Device, DeviceBuilder, DeviceId, Topology, MAX_DRONE_SPEED, 
 };
-use crate::device::networkmodel::{
-    AttackType, AttackerDevice, NetworkModelBuilder, NetworkModelType
+use crate::backend::device::networkmodel::{
+    NetworkModelBuilder, NetworkModelType
 }; 
-use crate::device::systems::{
+use crate::backend::device::networkmodel::attack::{AttackType, AttackerDevice};
+use crate::backend::device::systems::{
     MovementSystem, PowerSystem, TRXModule, TRXSystem
 };
-use crate::mathphysics::{Megahertz, Meter, Millisecond, Point3D, PowerUnit};
-use crate::message::{Goal, Message, MessageType};
-use crate::message::infection::InfectionType;
-use crate::signal::{
+use crate::backend::malware::{Malware, MalwareType};
+use crate::backend::mathphysics::{Megahertz, Meter, Point3D, PowerUnit};
+use crate::backend::message::{Goal, Message, MessageType};
+use crate::backend::signal::{
     SignalArea, SignalLevel, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
     RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
 };
-use crate::simulation::Simulation;
-use crate::simulation::renderer::{
+
+use super::cli::{AntennaType, Config};
+use super::simulation::Simulation;
+use super::simulation::renderer::{
     Axes3DRanges, DeviceColoring, PlottersRenderer
 };
 
@@ -33,8 +35,6 @@ const DEVICE_MAX_POWER: PowerUnit = 10_000;
 const NETWORK_ORIGIN: Point3D          = Point3D { x: 150.3, y: 90.6, z: 25.5 };
 const DRONE_DESTINATION: Point3D       = Point3D { x: 0.0, y: 0.0, z: 0.0 };
 const COMMAND_CENTER_POSITION: Point3D = Point3D { x: 200.0, y: 100.0, z: 0.0 };
-
-const START_TIME: Millisecond = 0;
 
 const PLOT_RESOLUTION: (u16, u16) = (400, 300);
 
@@ -208,8 +208,8 @@ fn default_movement_scenario(
 
 fn derive_filename(config: &Config, text: &str) -> String {
     let network_model_part = match config.network_model {
-        NetworkModelType::ComplexNetwork(_) => "cn",
-        NetworkModelType::CellularAutomaton => "ca",
+        NetworkModelType::Stateful     => "sf",
+        NetworkModelType::Stateless(_) => "sl",
     };
     let topology_part = match config.topology {
         Topology::Mesh => "mesh",
@@ -226,7 +226,7 @@ fn create_device_vec(
     antenna: &AntennaType,
     tx_control_area_radius: Meter,
     max_gps_rx_signal_level: SignalLevel,
-    vulnerabilities: &[InfectionType]
+    vulnerabilities: &[Malware]
 ) -> Vec<Device> {
     let mut rng = rand::rng();
 
@@ -271,6 +271,22 @@ fn create_device_vec(
     devices.insert(0, command_device);
 
     devices
+}
+
+fn indicator_malware() -> Malware {
+    Malware::new(
+        500, 
+        MalwareType::Indicator,
+        true,
+    )
+}
+
+fn jamming_malware(jammed_frequency: Megahertz) -> Malware {
+    Malware::new(
+        500, 
+        MalwareType::Jamming(jammed_frequency),
+        true,
+    )
 }
 
 
@@ -377,7 +393,6 @@ pub fn gps_only(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        START_TIME,
         end_time,
         vec![drone_network],
         renderer
@@ -477,7 +492,6 @@ pub fn gps_and_control(config: &Config) {
     );
     
     let mut simulation = Simulation::new(
-        START_TIME,
         end_time,
         vec![drone_network],
         renderer
@@ -488,7 +502,7 @@ pub fn gps_and_control(config: &Config) {
 
 pub fn command_delay(config: &Config) {
     let antenna = config.antenna();
-    let cc_tx_control_area_radius    = 300.0;
+    let cc_tx_control_area_radius    = 500.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
 
@@ -520,7 +534,7 @@ pub fn command_delay(config: &Config) {
 
     if config.display_delayless_network {
         let delayless_drone_network = NetworkModelBuilder::new(
-                NetworkModelType::ComplexNetwork(0.0)
+                NetworkModelType::Stateless(0.0)
             )
             .set_command_center_id(command_center_id)
             .set_devices(&devices)
@@ -539,7 +553,7 @@ pub fn command_delay(config: &Config) {
     
     drone_networks.insert(0, drone_network);
 
-    let end_time        = 15_000;
+    let end_time        = 10_000;
 
     let output_filename = derive_filename(config, "command_delay");
     let drone_colorings = vec![
@@ -557,7 +571,6 @@ pub fn command_delay(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        START_TIME,
         end_time,
         drone_networks,
         renderer
@@ -609,7 +622,7 @@ pub fn signal_color(config: &Config) {
     let end_time        = 50;
     
     let output_filename = derive_filename(config, "signal_color");
-    let plot_resolution = (800, 800);
+    let plot_resolution = (400, 300);
     let drone_colorings = vec![DeviceColoring::Signal];
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let renderer        = PlottersRenderer::new(
@@ -623,7 +636,6 @@ pub fn signal_color(config: &Config) {
     );
     
     let mut simulation = Simulation::new(
-        START_TIME,
         end_time,
         vec![drone_network],
         renderer
@@ -687,7 +699,6 @@ pub fn signal_color_dynamic(config: &Config) {
     );
     
     let mut simulation = Simulation::new(
-        START_TIME,
         end_time,
         vec![drone_network],
         renderer
@@ -703,10 +714,11 @@ pub fn infection(config: &Config) {
         AntennaType::Strength => 300.0
     };
     let drone_tx_control_area_radius = match config.network_model {
-        NetworkModelType::CellularAutomaton => 20.0,
-        NetworkModelType::ComplexNetwork(_) => 12.5
+        NetworkModelType::Stateful     => 12.5,
+        NetworkModelType::Stateless(_) => 30.0,
     };
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
+    let indicator_malware = indicator_malware();
 
     let command_center = DeviceBuilder::new()
         .set_real_position(Point3D::new(100.0, 50.0, 0.0))
@@ -728,7 +740,7 @@ pub fn infection(config: &Config) {
         &antenna,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
-        &[InfectionType::Indicator]
+        &[indicator_malware]
     ); 
     let infected_drone_id = devices[1].id();
     let scenario = vec!((
@@ -737,7 +749,7 @@ pub fn infection(config: &Config) {
             command_center_id,
             infected_drone_id,
             0, 
-            MessageType::Infection(InfectionType::Indicator)
+            MessageType::Malware(indicator_malware)
         ),
     ));
 
@@ -748,10 +760,10 @@ pub fn infection(config: &Config) {
         .set_scenario(scenario)
         .build();
 
-    let end_time        = 15_000;
+    let end_time        = 10_000;
     
     let output_filename = derive_filename(config, "infection");
-    let plot_resolution = (800, 800);
+    let plot_resolution = (400, 300);
     let drone_colorings = vec![DeviceColoring::Infection]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let renderer        = PlottersRenderer::new(
@@ -765,7 +777,6 @@ pub fn infection(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        START_TIME,
         end_time,
         vec![drone_network],
         renderer
@@ -781,10 +792,12 @@ pub fn jamming_infection(config: &Config) {
         AntennaType::Strength => 300.0
     };
     let drone_tx_control_area_radius = match config.network_model {
-        NetworkModelType::CellularAutomaton => 20.0,
-        NetworkModelType::ComplexNetwork(_) => 12.5
+        NetworkModelType::Stateful     => 12.5,
+        NetworkModelType::Stateless(_) => 30.0,
     };
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
+    let indicator_malware = indicator_malware();
+    let jamming_malware   = jamming_malware(WIFI_2_4GHZ_FREQUENCY);
 
     let command_center = DeviceBuilder::new()
         .set_real_position(Point3D::new(100.0, 50.0, 0.0))
@@ -799,10 +812,7 @@ pub fn jamming_infection(config: &Config) {
         -40.0..40.0,
         0.0..10.0,
     );
-    let vulnerabilities = [
-        InfectionType::Indicator, 
-        InfectionType::Jamming(WIFI_2_4GHZ_FREQUENCY)
-    ];
+    let vulnerabilities = [indicator_malware, jamming_malware];
     let devices = create_device_vec(
         command_center,
         &network_position,
@@ -819,7 +829,7 @@ pub fn jamming_infection(config: &Config) {
             command_center_id,
             infected_drone_id,
             0, 
-            MessageType::Infection(InfectionType::Indicator)
+            MessageType::Malware(indicator_malware)
         ),
     ));
     let jamming_scenario = vec!((
@@ -828,9 +838,7 @@ pub fn jamming_infection(config: &Config) {
             command_center_id,
             infected_drone_id,
             0, 
-            MessageType::Infection(
-                InfectionType::Jamming(WIFI_2_4GHZ_FREQUENCY)
-            )
+            MessageType::Malware(jamming_malware)
         ),
     ));
 
@@ -850,7 +858,7 @@ pub fn jamming_infection(config: &Config) {
     let end_time        = 15_000;
     
     let output_filename = derive_filename(config, "infection_indicator");
-    let plot_resolution = (800, 800);
+    let plot_resolution = (400, 300);
     let drone_colorings = vec![DeviceColoring::Infection]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let indicator_renderer = PlottersRenderer::new(
@@ -876,13 +884,11 @@ pub fn jamming_infection(config: &Config) {
     );
 
     let mut indicator_simulation = Simulation::new(
-        START_TIME,
         end_time,
         vec![drone_network_indicator],
         indicator_renderer
     );
     let mut jamming_simulation = Simulation::new(
-        START_TIME,
         end_time,
         vec![drone_network_jamming],
         jamming_renderer
@@ -899,7 +905,7 @@ pub fn gps_spoofing(config: &Config) {
     let cc_tx_control_area_radius    = 300.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = RED_SIGNAL_LEVEL; 
-    let ewd_suppression_area_radius  = 200.0; 
+    let gps_spoofing_area_radius     = 200.0; 
         
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)
@@ -941,7 +947,7 @@ pub fn gps_spoofing(config: &Config) {
             ewd_trx_system(
                 &antenna, 
                 GPS_L1_FREQUENCY, 
-                ewd_suppression_area_radius
+                gps_spoofing_area_radius
             )
         )
         .build();
@@ -960,7 +966,7 @@ pub fn gps_spoofing(config: &Config) {
 
     let end_time        = 15_000;
 
-    let output_filename = derive_filename(config, "gps_only");
+    let output_filename = derive_filename(config, "gps_spoofing");
     let axes_ranges     = Axes3DRanges::new(0.0..200.0, 0.0..0.0, 0.0..200.0);
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
     let renderer        = PlottersRenderer::new(
@@ -974,7 +980,97 @@ pub fn gps_spoofing(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        START_TIME,
+        end_time,
+        vec![drone_network],
+        renderer
+    );
+
+    simulation.run();
+}
+
+pub fn dos(config: &Config) {
+    let antenna = config.antenna();
+    let cc_tx_control_area_radius    = match antenna {
+        AntennaType::Color    => 200.0,
+        AntennaType::Strength => 300.0
+    };
+    let drone_tx_control_area_radius = match config.network_model {
+        NetworkModelType::Stateful     => 12.5,
+        NetworkModelType::Stateless(_) => 30.0,
+    };
+    let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
+    let dos_area_radius = 50.0;
+    let dos_malware     = Malware::new(
+        500, 
+        MalwareType::DoS(DEVICE_MAX_POWER), 
+        true
+    );
+
+    let command_center = DeviceBuilder::new()
+        .set_real_position(Point3D::new(100.0, 50.0, 0.0))
+        .set_power_system(device_power_system())
+        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .build();
+    let command_center_id = command_center.id();
+
+    let network_position = NetworkPosition::new(
+        Point3D::new(50.0, 50.0, 0.0),
+        -40.0..40.0,
+        -40.0..40.0,
+        0.0..10.0,
+    );
+    let devices = create_device_vec(
+        command_center,
+        &network_position,
+        100, 
+        &antenna,
+        drone_tx_control_area_radius,
+        drone_gps_rx_signal_level,
+        &[dos_malware]
+    ); 
+    
+    let dos_attacker = DeviceBuilder::new()
+        .set_real_position(Point3D::new(-10.0, 2.0, 0.0))
+        .set_power_system(device_power_system())
+        .set_trx_system(
+            ewd_trx_system(
+                &antenna,
+                WIFI_2_4GHZ_FREQUENCY,
+                dos_area_radius
+            )
+        )
+        .build();
+    let attacker_devices = [
+        AttackerDevice::new(
+            dos_attacker, 
+            AttackType::MalwareDistribution(dos_malware)
+        )
+    ];
+
+    let drone_network = NetworkModelBuilder::new(config.network_model)
+        .set_command_center_id(command_center_id)
+        .set_devices(&devices)
+        .set_attacker_devices(&attacker_devices)
+        .set_topology(config.topology)
+        .build();
+
+    let end_time        = 5_000;
+    
+    let output_filename = derive_filename(config, "dos");
+    let plot_resolution = (400, 300);
+    let drone_colorings = vec![DeviceColoring::Infection]; 
+    let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
+    let renderer        = PlottersRenderer::new(
+        &output_filename,
+        &config.plot_caption,
+        plot_resolution,
+        axes_ranges,
+        &drone_colorings,
+        1.57,
+        1.57
+    );
+
+    let mut simulation = Simulation::new(
         end_time,
         vec![drone_network],
         renderer

@@ -1,7 +1,8 @@
 use thiserror::Error;
 
-use crate::mathphysics::{wave_length_in_meters, Megahertz, Meter};
-use crate::signal::{
+use crate::backend::mathphysics::{wave_length_in_meters, Megahertz, Meter};
+
+use super::{
     MAX_BLACK_SIGNAL_STRENGTH, SignalLevel, SignalStrength, 
     SIGNAL_STRENGTH_SCALING
 };
@@ -88,7 +89,7 @@ impl SignalArea {
 
 #[cfg(test)]
 mod tests {
-    use crate::signal::GREEN_SIGNAL_LEVEL;
+    use crate::backend::signal::GREEN_SIGNAL_LEVEL;
 
     use super::*;
 

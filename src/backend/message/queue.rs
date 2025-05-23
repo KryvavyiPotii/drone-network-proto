@@ -1,8 +1,9 @@
 use std::slice::{Iter, IterMut};
 
-use crate::device::connections::DelaySnapshot;
-use crate::mathphysics::Megahertz;
-use crate::message::Message;
+use crate::backend::device::connections::DelaySnapshot;
+use crate::backend::mathphysics::Megahertz;
+
+use super::Message;
 
 
 #[derive(Clone, Debug, Default)]
@@ -101,7 +102,7 @@ impl<const N: usize> From<[(Megahertz, Message); N]> for MessageQueue {
 
 #[cfg(test)]
 mod tests {
-    use crate::message::{Goal, MessageType};
+    use crate::backend::message::{Goal, MessageType};
 
     use super::*;
 

@@ -2,15 +2,11 @@ use std::io::Write;
 
 use env_logger::{Builder, Target};
 
-use crate::cli::cli;
+use crate::frontend::cli::cli;
 
-pub mod cli;
-pub mod device;
-pub mod examples;
-pub mod mathphysics;
-pub mod message;
-pub mod signal;
-pub mod simulation;
+
+pub mod backend;
+pub mod frontend;
 
 
 fn configure_logging() {

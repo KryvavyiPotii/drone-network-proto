@@ -1,19 +1,19 @@
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use thiserror::Error;
 
-use crate::mathphysics::{
+use super::mathphysics::{
     Megahertz, Meter, MeterPerSecond, Millisecond, Point3D, Position, PowerUnit, 
     equation_of_motion_3d, millis_to_secs, 
 };
-use crate::message::{Goal, Message, MessageType};
-use crate::message::infection::{
-    InfectionState, InfectionType, JAMMING_SIGNAL_LEVEL
+use super::message::{Goal, Message, MessageType};
+use super::malware::{
+    InfectionState, Malware, MalwareToStateMap, MalwareType, 
+    JAMMING_SIGNAL_LEVEL
 };
-use crate::signal::{
-    FreqToLevelMap, SignalArea, SignalLevel, GPS_L1_FREQUENCY, GPS_L2_FREQUENCY, 
+use super::signal::{
+    FreqToLevelMap, SignalArea, SignalLevel, GPS_L1_FREQUENCY
 };
 
 use systems::{
@@ -73,7 +73,7 @@ pub struct DeviceBuilder {
     power_system: Option<PowerSystem>,
     movement_system: Option<MovementSystem>,
     trx_system: Option<TRXSystem>,
-    vulnerabilities: Option<Vec<InfectionType>>
+    vulnerabilities: Option<Vec<Malware>>,
 }
 
 impl DeviceBuilder {
@@ -128,7 +128,7 @@ impl DeviceBuilder {
     #[must_use]
     pub fn set_vulnerabilities(
         mut self, 
-        vulnerabilities: &[InfectionType]
+        vulnerabilities: &[Malware]
     ) -> Self {
         self.vulnerabilities = Some(vulnerabilities.to_vec());
         self
@@ -163,7 +163,8 @@ pub struct Device {
     power_system: PowerSystem,
     movement_system: MovementSystem,
     trx_system: TRXSystem,
-    infection_states: HashMap<InfectionType, InfectionState>,
+    // TODO HashMap<MalwareId, InfectionState>
+    infection_states: MalwareToStateMap,
 }
 
 impl Device {
@@ -175,11 +176,11 @@ impl Device {
         power_system: PowerSystem,
         movement_system: MovementSystem,
         trx_system: TRXSystem,
-        vulnerabilities: &[InfectionType]
+        vulnerabilities: &[Malware]
     ) -> Self {
         let infection_states = vulnerabilities
             .iter()
-            .map(|infection_type| (*infection_type, InfectionState::Vulnerable))
+            .map(|malware| (*malware, InfectionState::Vulnerable))
             .collect();
 
         Self {
@@ -223,11 +224,13 @@ impl Device {
         self.trx_system.area(frequency)
     }
     
+    // self - transmitter
     #[must_use]
     pub fn transmits_at(&self, distance: Meter, frequency: Megahertz) -> bool {
         self.trx_system.transmits_to(distance, frequency)
     }
     
+    // self - transmitter
     #[must_use]
     pub fn transmits_to<P: Position>(
         &self, 
@@ -239,6 +242,7 @@ impl Device {
         self.transmits_at(distance, frequency)
     }
     
+    // self - transmitter
     #[must_use]
     pub fn propagated_signal_level_at(
         &self,
@@ -250,7 +254,8 @@ impl Device {
         self.trx_system.tx_signal_level_at(frequency, distance_to_rx)
     }
     
-    pub fn propagate_signal (
+    // self - transmitter
+    pub fn propagate_signal(
         &self,
         receiver: &mut Self,
         frequency: Megahertz
@@ -262,7 +267,15 @@ impl Device {
 
         receiver.receive_signal(propagated_signal_level_at_rx, frequency);
     }
+
+    // self - EWD 
+    pub fn suppress_all_signals(&self, receiver: &mut Self) {
+        for frequency in self.tx_signal_levels().keys() {
+            self.suppress_signal(receiver, *frequency);    
+        }
+    }
     
+    // self - EWD 
     pub fn suppress_signal(
         &self,
         receiver: &mut Self,
@@ -295,9 +308,7 @@ impl Device {
     }
     
     #[must_use]
-    pub fn infection_states(
-        &self, 
-    ) -> &HashMap<InfectionType, InfectionState> {
+    pub fn infection_states(&self) -> &MalwareToStateMap {
         &self.infection_states
     }   
 
@@ -311,9 +322,9 @@ impl Device {
     }
     
     #[must_use]
-    pub fn is_infected_with(&self, infection_type: &InfectionType) -> bool {
+    pub fn is_infected_with(&self, malware: &Malware) -> bool {
         matches!(
-            self.infection_states.get(infection_type),
+            self.infection_states.get(malware),
             Some(InfectionState::Infected),
         )
     }
@@ -321,10 +332,10 @@ impl Device {
     #[must_use]
     pub fn infection_state(
         &self, 
-        infection_type: &InfectionType
+        malware: &Malware
     ) -> &InfectionState {
         self.infection_states
-            .get(infection_type)
+            .get(malware)
             .unwrap_or(&InfectionState::Patched)
     } 
 
@@ -390,31 +401,39 @@ impl Device {
         frequency: Megahertz, 
     ) -> Result<(), DeviceError> {
         self.receive_message(message, frequency)?;
-
         self.try_consume_power(PROCESSING_POWER_CONSUMPTION)?;
-
-        match message.message_type() {
-            MessageType::GPS(gps_position)         => {
-                self.movement_system.set_position(*gps_position);
-            },
-            MessageType::Infection(infection_type) => {
-                if let InfectionState::Vulnerable = self
-                    .infection_state(infection_type)
-                {
-                    self.infection_states.insert(
-                        *infection_type, 
-                        InfectionState::Infected
-                    );
-                }
-            },
-            MessageType::SetGoal(goal)             => {
-                self.goal = *goal;
-            },
-        };
+        self.process_message(message); 
 
         Ok(())
     }
 
+    fn process_message(&mut self, message: &Message) {
+        match message.message_type() {
+            MessageType::GPS(gps_position) => {
+                self.movement_system.set_position(*gps_position);
+            },
+            MessageType::Malware(malware)  => {
+                self.process_malware(malware);
+            },
+            MessageType::SetGoal(goal)     => {
+                self.goal = *goal;
+            },
+        }
+    }
+
+    fn process_malware(&mut self, malware: &Malware) {
+        if matches!(
+            self.infection_state(malware), 
+            InfectionState::Vulnerable
+        ) {
+            self.infection_states.insert(*malware, InfectionState::Infected);
+        }
+    }
+
+    /// # Errors
+    ///
+    /// Will return `Err` if all power is consumed or the movement system is
+    /// disabled.
     pub fn update_state(&mut self) -> Result<(), DeviceError> {
         self.try_consume_power(PASSIVE_POWER_CONSUMPTION)?;
         self.process_goal();
@@ -424,8 +443,7 @@ impl Device {
     }
 
     fn process_goal(&mut self) {
-        let gps_is_connected = self.receives_signal(GPS_L1_FREQUENCY) 
-            || self.receives_signal(GPS_L2_FREQUENCY);
+        let gps_is_connected = self.receives_signal(GPS_L1_FREQUENCY); 
 
         match self.goal {
             Goal::Attack(destination) | Goal::Reposition(destination) 
@@ -437,7 +455,7 @@ impl Device {
                 self.update_movement_direction_without_gps();
             },
             Goal::Undefined => ()
-        };
+        }
     }
     
     fn update_movement_direction_without_gps(&mut self) {
@@ -472,10 +490,10 @@ impl Device {
     ) -> Result<(), PowerSystemError> {
         self.power_system
             .try_consume_power(power)
-            .or_else(|error| {
+            .map_err(|error| {
                 self.selfdestruction();
 
-                Err(error)
+                error
             })
     }
 
@@ -502,7 +520,7 @@ impl Device {
 
     // Handling is done on the network model level.
     pub fn handle_infection(&mut self) {
-        let infections: Vec<InfectionType> = self.infection_states
+        let infections: Vec<Malware> = self.infection_states
             .iter()
             .filter_map(|(infection_type, infection_state)| 
                 match infection_state {
@@ -512,13 +530,20 @@ impl Device {
             )
             .collect();
 
-        for infection_type in &infections {
-            match infection_type {
-                InfectionType::Indicator          => (),
-                InfectionType::Jamming(frequency) => 
+        for malware in &infections {
+            match malware.malware_type() {
+                MalwareType::DoS(lost_power)    => 
+                    self.handle_dos(*lost_power),
+                MalwareType::Indicator          => 
+                    (),
+                MalwareType::Jamming(frequency) => 
                     self.handle_jamming(*frequency)
             }
         }
+    }
+    
+    fn handle_dos(&mut self, lost_power: PowerUnit) {
+        let _ = self.try_consume_power(lost_power);
     }
 
     fn handle_jamming(&mut self, frequency: Megahertz) {
@@ -552,8 +577,8 @@ impl Position for Device {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::device::systems::TRXModule;
-    use crate::signal::{
+    use crate::backend::device::systems::TRXModule;
+    use crate::backend::signal::{
         BLACK_SIGNAL_LEVEL, GREEN_SIGNAL_LEVEL, NO_SIGNAL_LEVEL, 
         RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
     };
@@ -672,6 +697,14 @@ mod tests {
         && device.movement_system == MovementSystem::default()
     }
 
+    fn jamming_malware(jammed_frequency: Megahertz) -> Malware {
+        Malware::new(
+            0, 
+            MalwareType::Jamming(jammed_frequency),
+            false,
+        )
+    }
+
 
     #[test]
     fn unique_device_ids() {
@@ -686,6 +719,14 @@ mod tests {
         assert_ne!(command_center.id(), electronic_warfare.id());
         assert_ne!(command_center.id(), drone.id());
         assert_ne!(electronic_warfare.id(), drone.id());
+    }
+
+    #[test]
+    fn same_device_ids_on_clone() {
+        let device = DeviceBuilder::new().build();
+        let cloned_device = device.clone();
+
+        assert_eq!(device.id(), cloned_device.id())
     }
 
     #[test]
@@ -1050,8 +1091,8 @@ mod tests {
 
     #[test]
     fn invulnerable_device_infection() {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
-        let infection_type = InfectionType::Jamming(frequency);
+        let frequency  = WIFI_2_4GHZ_FREQUENCY;
+        let malware    = jamming_malware(frequency); 
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
             .set_trx_system(drone_green_rx_system(frequency))
@@ -1061,14 +1102,14 @@ mod tests {
             UNKNOWN_ID,
             BROADCAST_ID,
             0, 
-            MessageType::Infection(infection_type)
+            MessageType::Malware(malware)
         );
 
         assert!(!device.is_infected());
-        assert!(!device.is_infected_with(&infection_type));
+        assert!(!device.is_infected_with(&malware));
         assert!(
             matches!(
-                device.infection_state(&infection_type),
+                device.infection_state(&malware),
                 InfectionState::Patched
             )
         );
@@ -1079,10 +1120,10 @@ mod tests {
         );
         
         assert!(!device.is_infected());
-        assert!(!device.is_infected_with(&infection_type));
+        assert!(!device.is_infected_with(&malware));
         assert!(
             matches!(
-                device.infection_state(&infection_type),
+                device.infection_state(&malware),
                 InfectionState::Patched
             )
         );
@@ -1090,26 +1131,26 @@ mod tests {
 
     #[test]
     fn vulnerable_device_infection() {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
-        let infection_type = InfectionType::Jamming(frequency);
+        let frequency  = WIFI_2_4GHZ_FREQUENCY;
+        let malware    = jamming_malware(frequency); 
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
             .set_trx_system(drone_green_rx_system(frequency))
-            .set_vulnerabilities(&[infection_type])
+            .set_vulnerabilities(&[malware])
             .build(); 
         
         let message = Message::new(
             UNKNOWN_ID,
             BROADCAST_ID,
             0, 
-            MessageType::Infection(infection_type)
+            MessageType::Malware(malware)
         );
 
         assert!(!device.is_infected());
-        assert!(!device.is_infected_with(&infection_type));
+        assert!(!device.is_infected_with(&malware));
         assert!(
             matches!(
-                device.infection_state(&infection_type),
+                device.infection_state(&malware),
                 InfectionState::Vulnerable
             )
         );
@@ -1119,10 +1160,10 @@ mod tests {
                 .is_ok()
         );
         assert!(device.is_infected());
-        assert!(device.is_infected_with(&infection_type));
+        assert!(device.is_infected_with(&malware));
         assert!(
             matches!(
-                device.infection_state(&infection_type),
+                device.infection_state(&malware),
                 InfectionState::Infected
             )
         );
@@ -1130,9 +1171,9 @@ mod tests {
 
     #[test]
     fn jamming_affects_only_specified_frequency() {
-        let jammed_frequency     = WIFI_2_4GHZ_FREQUENCY;
-        let untouched_frequency  = GPS_L1_FREQUENCY;
-        let infection_type = InfectionType::Jamming(jammed_frequency);
+        let jammed_frequency    = WIFI_2_4GHZ_FREQUENCY;
+        let untouched_frequency = GPS_L1_FREQUENCY;
+        let jamming_malware     = jamming_malware(jammed_frequency); 
 
         let green_signal_levels = HashMap::from([
             (jammed_frequency, GREEN_SIGNAL_LEVEL),
@@ -1147,14 +1188,14 @@ mod tests {
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
             .set_trx_system(rx_system)
-            .set_vulnerabilities(&[infection_type])
+            .set_vulnerabilities(&[jamming_malware])
             .build();
         
         let message = Message::new(
             UNKNOWN_ID,
             BROADCAST_ID,
             0, 
-            MessageType::Infection(infection_type)
+            MessageType::Malware(jamming_malware)
         );
 
         let signal_level_on_jammed_frequency = *device.rx_signal_level(
