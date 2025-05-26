@@ -13,7 +13,7 @@ use crate::backend::device::{Device, DESTINATION_RADIUS, STEP_DURATION};
 use crate::backend::device::networkmodel::NetworkModel;
 use crate::backend::device::networkmodel::attack::{AttackerDevice, AttackType};
 use crate::backend::mathphysics::{Megahertz, Meter, Point3D, Position};
-use crate::backend::message::Goal;
+use crate::backend::message::Task;
 
 
 const COMMAND_CENTER_RADIUS: Meter = 5.0;
@@ -40,19 +40,21 @@ fn network_models_destinations(
     let mut destinations = Vec::new();
 
     for network_model in network_models {
-        let goal_vec: Vec<Goal> = network_model
-            .goals()
+        let task_vec: Vec<Task> = network_model
+            .device_tasks()
             .values()
             .copied()
             .collect();
 
-        goal_vec
+        task_vec
             .iter()
-            .for_each(|goal|
-                match goal {
-                    Goal::Attack(destination) | Goal::Reposition(destination) =>
+            .for_each(|task|
+                match task {
+                    Task::Attack(destination) 
+                        | Task::Reconnect(destination)
+                        | Task::Reposition(destination) => 
                         destinations.push(*destination),
-                    Goal::Undefined => (),
+                    Task::Undefined => (),
                 }
             );
     }

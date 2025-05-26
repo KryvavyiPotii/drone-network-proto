@@ -60,8 +60,8 @@ impl MovementSystem {
         self.max_speed == 0.0
     }
     
-    pub fn set_position(&mut self, position: Point3D) {
-        self.position_in_meters = position;
+    pub fn set_position(&mut self, position_in_meters: Point3D) {
+        self.position_in_meters = position_in_meters;
     }
     
     pub fn set_velocity(&mut self, velocity_in_mps: Vector3D) {
@@ -73,14 +73,14 @@ impl MovementSystem {
         self.velocity_in_mps.truncate(self.max_speed);
     }
     
-    pub fn update_movement_direction(&mut self, destination: Point3D) {
+    pub fn set_direction(&mut self, destination_in_metres: Point3D) {
         if self.is_disabled() {
             return;
         }
         
         self.velocity_in_mps = Vector3D::new(
             self.position_in_meters,
-            destination
+            destination_in_metres
         );
         
         self.velocity_in_mps.scale_to(self.max_speed);

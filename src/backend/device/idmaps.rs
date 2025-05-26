@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::collections::hash_map::{Iter, IterMut, Keys, Values, ValuesMut};
 
 use crate::backend::mathphysics::Megahertz;
-use crate::backend::message::Goal;
+use crate::backend::message::Task;
 use crate::backend::signal::{SignalLevel, NO_SIGNAL_LEVEL};
 
 use super::{Device, DeviceId};
 
 
 pub type IdToLevelMap = HashMap<DeviceId, SignalLevel>;
-pub type IdToGoalMap  = HashMap<DeviceId, Goal>;
+pub type IdToTaskMap  = HashMap<DeviceId, Task>;
 
 
 #[derive(Clone, Debug)]
@@ -69,10 +69,10 @@ impl IdToDeviceMap {
     }
 
     #[must_use]
-    pub fn goals(&self) -> IdToGoalMap {
+    pub fn tasks(&self) -> IdToTaskMap {
         self.0
             .iter()
-            .map(|(device_id, device)| (*device_id, *device.goal()))
+            .map(|(device_id, device)| (*device_id, *device.task()))
             .collect()
     }
 

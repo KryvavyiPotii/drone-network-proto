@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::backend::mathphysics::{Megahertz, Meter};
 use crate::backend::message::Message;
 use crate::backend::signal::{
-    BLACK_SIGNAL_LEVEL, FreqToLevelMap, NO_SIGNAL_LEVEL, SignalArea, SignalLevel
+    BLACK_SIGNAL_LEVEL, FreqToLevelMap, SignalArea, SignalLevel
 };
 
 use super::TRXModule;
@@ -287,12 +287,11 @@ impl TRXSystem {
         };
     
         let current_signal_level = rx_module.signal_level(frequency);
-        let new_signal_level = current_signal_level - message.cost();
-        
-        if new_signal_level < NO_SIGNAL_LEVEL {
+        if current_signal_level < message.cost() {
             return Err(TRXSystemError::TooExpensiveMessage);
         }
-
+        
+        let new_signal_level = current_signal_level - message.cost();
         rx_module.set_signal_level(new_signal_level, frequency);
 
         Ok(())
@@ -315,7 +314,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::backend::device::{BROADCAST_ID, UNKNOWN_ID};
-    use crate::backend::message::{Goal, Message, MessageType};
+    use crate::backend::message::{Task, Message, MessageType};
     use crate::backend::signal::{
         SignalStrength, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL, 
         WIFI_2_4GHZ_FREQUENCY, YELLOW_SIGNAL_LEVEL
@@ -418,7 +417,7 @@ mod tests {
             UNKNOWN_ID,
             BROADCAST_ID,
             0, 
-            MessageType::SetGoal(Goal::Undefined)
+            MessageType::SetTask(Task::Undefined)
         );
 
         let barely_green_signal_level = 
@@ -450,7 +449,7 @@ mod tests {
             UNKNOWN_ID,
             BROADCAST_ID,
             0, 
-            MessageType::SetGoal(Goal::Undefined)
+            MessageType::SetTask(Task::Undefined)
         );
         
         let barely_green_signal_level = 
@@ -483,7 +482,7 @@ mod tests {
             UNKNOWN_ID,
             BROADCAST_ID,
             0, 
-            MessageType::SetGoal(Goal::Undefined)
+            MessageType::SetTask(Task::Undefined)
         );
         let rx_module = TRXModule::build(
             HashMap::from([(frequency, GREEN_SIGNAL_LEVEL)]),

@@ -102,7 +102,7 @@ impl<const N: usize> From<[(Megahertz, Message); N]> for MessageQueue {
 
 #[cfg(test)]
 mod tests {
-    use crate::backend::message::{Goal, MessageType};
+    use crate::backend::message::{Task, MessageType};
 
     use super::*;
 
@@ -118,7 +118,7 @@ mod tests {
                     2, 
                     3, 
                     25, 
-                    MessageType::SetGoal(Goal::Undefined)
+                    MessageType::SetTask(Task::Undefined)
                 )
             ),
             (
@@ -127,7 +127,7 @@ mod tests {
                     1, 
                     2, 
                     5, 
-                    MessageType::SetGoal(Goal::Undefined)
+                    MessageType::SetTask(Task::Undefined)
                 )
             ),
             (
@@ -136,7 +136,7 @@ mod tests {
                     1, 
                     3, 
                     10, 
-                    MessageType::SetGoal(Goal::Undefined)
+                    MessageType::SetTask(Task::Undefined)
                 )
             )
         ]

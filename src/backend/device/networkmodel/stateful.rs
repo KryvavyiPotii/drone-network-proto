@@ -1,11 +1,12 @@
 use std::collections::hash_map::Values;
+use std::collections::HashMap;
 
 use crate::backend::device::{
     BROADCAST_ID, ConnectionGraph, Device, DeviceId, FindSignalLevel, 
-    IdToDeviceMap, IdToGoalMap, IdToLevelMap, STEP_DURATION, Topology 
+    IdToDeviceMap, IdToTaskMap, IdToLevelMap, STEP_DURATION, Topology 
 };
 use crate::backend::mathphysics::{Megahertz, Millisecond};
-use crate::backend::message::{Message, MessageQueue};
+use crate::backend::message::{Message, MessageQueue, MessageType, Task};
 use crate::backend::signal::{
     NO_SIGNAL_LEVEL, SignalLevel, signal_level_change_happens, 
     WIFI_2_4GHZ_FREQUENCY
@@ -18,7 +19,7 @@ use super::attack::{
 };
 use super::msgproc::{
     MessagePreprocessError, UnicastMessageError, connect_gps_to_all_devices, 
-    send_gps_messages, try_preprocess_message
+    send_gps_messages, try_add_task, try_preprocess_message
 };
 
 
@@ -140,6 +141,7 @@ pub struct StatefulModel {
     topology: Topology,
     connections: ConnectionGraph,
     message_queue: MessageQueue,
+    current_tasks: IdToTaskMap,
 }
 
 impl StatefulModel {
@@ -151,6 +153,8 @@ impl StatefulModel {
         scenario: &[(Megahertz, Message)],
         topology: Topology,
     ) -> Self {
+        let message_queue = MessageQueue::from(scenario);
+
         let mut stateful_model = Self {
             current_time: 0,
             command_device_id,
@@ -158,7 +162,8 @@ impl StatefulModel {
             attacker_devices,
             topology,
             connections: ConnectionGraph::new(),
-            message_queue: MessageQueue::from(scenario),
+            message_queue,
+            current_tasks: HashMap::new()
         };
 
         stateful_model.set_initial_state();
@@ -167,8 +172,8 @@ impl StatefulModel {
     }
     
     #[must_use]
-    pub fn goals(&self) -> IdToGoalMap {
-        self.device_map.goals()
+    pub fn device_tasks(&self) -> IdToTaskMap {
+        self.device_map.tasks()
     }
     
     /// # Panics
@@ -211,14 +216,13 @@ impl StatefulModel {
         self.send_gps_messages();
         self.update_connections_graph();
         self.update_signal_levels();
-        self.remove_disconnected_devices();
     }
      
     pub fn update(&mut self) {
         self.update_connections_graph();
         self.update_signal_levels();
+        self.reconnect_devices();
         self.process_attacks();
-        self.remove_disconnected_devices();
         self.process_message_queue();
         self.device_map.update_states(); 
         self.send_gps_messages();
@@ -266,6 +270,12 @@ impl StatefulModel {
                 continue;
             }
             
+            try_add_task(
+                message,
+                &mut self.current_tasks, 
+                &self.device_map,
+            );
+            
             let receiver_ids = send_message_and_handle_infection(
                 message,
                 *frequency,
@@ -293,6 +303,27 @@ impl StatefulModel {
         );
     }
 
+    fn reconnect_devices(&mut self) {
+        for (device_id, device) in &self.device_map {
+            let Task::Reconnect(_) = device.task() else {
+                continue;
+            };
+
+            let current_task = *self.current_tasks
+                .get(device_id)
+                .unwrap_or(&Task::Undefined);
+            let task_message = Message::new(
+                self.command_device_id, 
+                *device_id, 
+                self.current_time, 
+                MessageType::SetTask(current_task)
+            );
+
+            // TODO generalize control frequency
+            self.message_queue.add_message(WIFI_2_4GHZ_FREQUENCY, task_message);
+        }
+    }
+
     fn process_attacks(&mut self) {
         for attacker_device in &self.attacker_devices {
             process_attack(
@@ -309,13 +340,6 @@ impl StatefulModel {
             &self.device_map, 
             &mut self.message_queue, 
             self.current_time
-        );
-    }
-    
-    fn remove_disconnected_devices(&mut self) {
-        self.device_map.remove_not_receiving_devices(
-            &self.command_device_id,
-            WIFI_2_4GHZ_FREQUENCY
         );
     }
 }

@@ -22,7 +22,7 @@ const GPS_COST: MessageCost           = MessageCost(3.0);
 const MAL_INDICATOR_COST: MessageCost = MessageCost(1.0);
 const MAL_JAMMING_COST: MessageCost   = MessageCost(2.0);
 const MAL_DOS_COST: MessageCost       = MessageCost(1.0);
-const SET_GOAL_COST: MessageCost      = MessageCost(5.0); 
+const SET_TASK_COST: MessageCost      = MessageCost(5.0); 
 
 
 fn message_transmission_cost(message_type: &MessageType) -> MessageCost {
@@ -31,7 +31,7 @@ fn message_transmission_cost(message_type: &MessageType) -> MessageCost {
         MessageType::Malware(malware) => malware_transmission_cost(
             *malware.malware_type()
         ),
-        MessageType::SetGoal(_)       => SET_GOAL_COST,
+        MessageType::SetTask(_)       => SET_TASK_COST,
     }
 }
 
@@ -91,9 +91,10 @@ impl_op_ex!(
 
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum Goal {
+pub enum Task {
     #[default]
     Undefined,
+    Reconnect(Point3D),
     Reposition(Point3D),
     Attack(Point3D),
 }
@@ -103,7 +104,7 @@ pub enum Goal {
 pub enum MessageType {
     GPS(Point3D),
     Malware(Malware),
-    SetGoal(Goal),
+    SetTask(Task),
 }
 
 
@@ -184,8 +185,8 @@ impl Message {
     }
     
     #[must_use]
-    pub fn is_set_goal(&self) -> bool {
-        matches!(self.message_type, MessageType::SetGoal(_))
+    pub fn is_set_task(&self) -> bool {
+        matches!(self.message_type, MessageType::SetTask(_))
     }
 
     pub fn process(&mut self) {

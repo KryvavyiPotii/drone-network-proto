@@ -4,16 +4,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
 use super::mathphysics::{
-    Megahertz, Meter, MeterPerSecond, Millisecond, Point3D, Position, PowerUnit, 
-    equation_of_motion_3d, millis_to_secs, 
+    equation_of_motion_3d, millis_to_secs, Megahertz, Meter, MeterPerSecond, 
+    Millisecond, Point3D, Position, PowerUnit,
 };
-use super::message::{Goal, Message, MessageType};
+use super::message::{Task, Message, MessageType};
 use super::malware::{
     InfectionState, Malware, MalwareToStateMap, MalwareType, 
     JAMMING_SIGNAL_LEVEL
 };
 use super::signal::{
-    FreqToLevelMap, SignalArea, SignalLevel, GPS_L1_FREQUENCY
+    FreqToLevelMap, SignalArea, SignalLevel, GPS_L1_FREQUENCY, 
+    WIFI_2_4GHZ_FREQUENCY
 };
 
 use systems::{
@@ -22,7 +23,7 @@ use systems::{
 
 
 pub use connections::*;
-pub use idmaps::{IdToDeviceMap, IdToGoalMap, IdToLevelMap};
+pub use idmaps::{IdToDeviceMap, IdToTaskMap, IdToLevelMap};
 
 
 pub mod connections;
@@ -36,15 +37,15 @@ pub type DeviceId = usize;
 
 pub const STEP_DURATION: Millisecond = 50;
 
-pub const BROADCAST_ID: DeviceId     = 0;
-pub const UNKNOWN_ID: DeviceId       = 0;
+pub const BROADCAST_ID: DeviceId = 0;
+pub const UNKNOWN_ID: DeviceId   = 0;
 
-pub const DESTINATION_RADIUS: Meter = 5.0;
+pub const DESTINATION_RADIUS: Meter        = 5.0;
 pub const MAX_DRONE_SPEED: MeterPerSecond  = 25.0;
 
 
-const MOVEMENT_POWER_CONSUMPTION:   PowerUnit = 5; 
-const PASSIVE_POWER_CONSUMPTION:    PowerUnit = 1; 
+const MOVEMENT_POWER_CONSUMPTION: PowerUnit   = 5; 
+const PASSIVE_POWER_CONSUMPTION: PowerUnit    = 1; 
 const PROCESSING_POWER_CONSUMPTION: PowerUnit = 5; 
 
 static FREE_DEVICE_ID: AtomicUsize = AtomicUsize::new(1);
@@ -66,14 +67,25 @@ pub enum DeviceError {
 }
 
 
+#[derive(Clone, Copy, Debug, Default)]
+pub enum SignalLossResponse {
+    Ascend,
+    Hover,
+    ReturnToHome(Point3D), // Point3D is a home point
+    #[default]
+    Shutdown,
+}
+
+
 #[derive(Clone, Debug)]
 pub struct DeviceBuilder {
     real_position_in_meters: Option<Point3D>,
-    goal: Option<Goal>,
+    task: Option<Task>,
     power_system: Option<PowerSystem>,
     movement_system: Option<MovementSystem>,
     trx_system: Option<TRXSystem>,
     vulnerabilities: Option<Vec<Malware>>,
+    signal_loss_response: Option<SignalLossResponse>,
 }
 
 impl DeviceBuilder {
@@ -81,11 +93,12 @@ impl DeviceBuilder {
     pub fn new() -> Self {
         Self {
             real_position_in_meters: None,
-            goal: None,
+            task: None,
             power_system: None,
             movement_system: None,
             trx_system: None,
-            vulnerabilities: None
+            vulnerabilities: None,
+            signal_loss_response: None,
         }
     }
 
@@ -99,8 +112,8 @@ impl DeviceBuilder {
     }
     
     #[must_use]
-    pub fn set_goal(mut self, goal: Goal) -> Self {
-        self.goal = Some(goal);
+    pub fn set_task(mut self, task: Task) -> Self {
+        self.task = Some(task);
         self
     }
     
@@ -133,17 +146,27 @@ impl DeviceBuilder {
         self.vulnerabilities = Some(vulnerabilities.to_vec());
         self
     }
+
+    #[must_use]
+    pub fn set_signal_loss_response(
+        mut self,
+        signal_loss_response: SignalLossResponse
+    ) -> Self {
+        self.signal_loss_response = Some(signal_loss_response);
+        self
+    }
    
     #[must_use]
     pub fn build(self) -> Device {
         Device::new(
             generate_device_id(),
             self.real_position_in_meters.unwrap_or_default(),
-            self.goal.unwrap_or_default(),
+            self.task.unwrap_or_default(),
             self.power_system.unwrap_or_default(),
             self.movement_system.unwrap_or_default(),
             self.trx_system.unwrap_or_default(),
-            self.vulnerabilities.unwrap_or_default().as_ref()
+            self.vulnerabilities.unwrap_or_default().as_ref(),
+            self.signal_loss_response.unwrap_or_default(),
         )
     }
 }
@@ -159,12 +182,16 @@ impl Default for DeviceBuilder {
 pub struct Device {
     id: DeviceId,
     real_position_in_meters: Point3D,
-    goal: Goal,
+    task: Task,
     power_system: PowerSystem,
     movement_system: MovementSystem,
     trx_system: TRXSystem,
     // TODO HashMap<MalwareId, InfectionState>
     infection_states: MalwareToStateMap,
+    // A device that is a command center should always have RX-module which
+    // receives control signal. Otherwise, it will constantly execute signal
+    // loss response.
+    signal_loss_response: SignalLossResponse,
 }
 
 impl Device {
@@ -172,11 +199,12 @@ impl Device {
     pub fn new(
         id: DeviceId,
         real_position_in_meters: Point3D,
-        goal: Goal,
+        task: Task,
         power_system: PowerSystem,
         movement_system: MovementSystem,
         trx_system: TRXSystem,
-        vulnerabilities: &[Malware]
+        vulnerabilities: &[Malware],
+        signal_loss_response: SignalLossResponse,
     ) -> Self {
         let infection_states = vulnerabilities
             .iter()
@@ -186,11 +214,12 @@ impl Device {
         Self {
             id,
             real_position_in_meters,
-            goal,
+            task,
             power_system,
             movement_system,
             trx_system,
             infection_states,
+            signal_loss_response,
         }
     }
 
@@ -200,8 +229,8 @@ impl Device {
     }
     
     #[must_use]
-    pub fn goal(&self) -> &Goal {
-        &self.goal
+    pub fn task(&self) -> &Task {
+        &self.task
     }
     
     #[must_use]
@@ -242,6 +271,53 @@ impl Device {
         self.transmits_at(distance, frequency)
     }
     
+    #[must_use]
+    pub fn rx_signal_levels(&self) -> &FreqToLevelMap {
+        self.trx_system.rx_signal_levels()
+    }
+
+    #[must_use]
+    pub fn rx_signal_level(&self, frequency: Megahertz) -> &SignalLevel {
+        self.trx_system.rx_signal_level(frequency)
+    }
+  
+    #[must_use]
+    pub fn receives_signal(&self, frequency: Megahertz) -> bool {
+        self.trx_system.receives_signal(frequency)
+    }
+    
+    #[must_use]
+    pub fn infection_states(&self) -> &MalwareToStateMap {
+        &self.infection_states
+    }   
+
+    #[must_use]
+    pub fn is_infected(&self) -> bool {
+        self.infection_states
+            .values()
+            .any(|infection_state| 
+                matches!(infection_state, InfectionState::Infected)
+            )
+    }
+    
+    #[must_use]
+    pub fn is_infected_with(&self, malware: &Malware) -> bool {
+        matches!(
+            self.infection_states.get(malware),
+            Some(InfectionState::Infected),
+        )
+    }
+    
+    #[must_use]
+    pub fn infection_state(
+        &self, 
+        malware: &Malware
+    ) -> &InfectionState {
+        self.infection_states
+            .get(malware)
+            .unwrap_or(&InfectionState::Patched)
+    } 
+
     // self - transmitter
     #[must_use]
     pub fn propagated_signal_level_at(
@@ -292,53 +368,6 @@ impl Device {
         );
     }
    
-    #[must_use]
-    pub fn rx_signal_levels(&self) -> &FreqToLevelMap {
-        self.trx_system.rx_signal_levels()
-    }
-
-    #[must_use]
-    pub fn rx_signal_level(&self, frequency: Megahertz) -> &SignalLevel {
-        self.trx_system.rx_signal_level(frequency)
-    }
-  
-    #[must_use]
-    pub fn receives_signal(&self, frequency: Megahertz) -> bool {
-        self.trx_system.receives_signal(frequency)
-    }
-    
-    #[must_use]
-    pub fn infection_states(&self) -> &MalwareToStateMap {
-        &self.infection_states
-    }   
-
-    #[must_use]
-    pub fn is_infected(&self) -> bool {
-        self.infection_states
-            .values()
-            .any(|infection_state| 
-                matches!(infection_state, InfectionState::Infected)
-            )
-    }
-    
-    #[must_use]
-    pub fn is_infected_with(&self, malware: &Malware) -> bool {
-        matches!(
-            self.infection_states.get(malware),
-            Some(InfectionState::Infected),
-        )
-    }
-    
-    #[must_use]
-    pub fn infection_state(
-        &self, 
-        malware: &Malware
-    ) -> &InfectionState {
-        self.infection_states
-            .get(malware)
-            .unwrap_or(&InfectionState::Patched)
-    } 
-
     pub fn set_tx_signal_level(
         &mut self, 
         signal_level: SignalLevel,
@@ -415,8 +444,8 @@ impl Device {
             MessageType::Malware(malware)  => {
                 self.process_malware(malware);
             },
-            MessageType::SetGoal(goal)     => {
-                self.goal = *goal;
+            MessageType::SetTask(task)     => {
+                self.task = *task;
             },
         }
     }
@@ -436,29 +465,50 @@ impl Device {
     /// disabled.
     pub fn update_state(&mut self) -> Result<(), DeviceError> {
         self.try_consume_power(PASSIVE_POWER_CONSUMPTION)?;
-        self.process_goal();
+        
+        // TODO generalize for any frequency
+        if self.receives_signal(WIFI_2_4GHZ_FREQUENCY) {
+            self.process_task();
+        // TODO add autonomous work as a parameter
+        } else {
+            self.handle_signal_loss();
+        }
+
         self.update_real_position()?;
 
         Ok(())
     }
 
-    fn process_goal(&mut self) {
+    fn try_consume_power(
+        &mut self, 
+        power: PowerUnit
+    ) -> Result<(), PowerSystemError> {
+        self.power_system
+            .try_consume_power(power)
+            .inspect_err(|_| self.selfdestruction())
+    }
+
+    fn process_task(&mut self) {
         let gps_is_connected = self.receives_signal(GPS_L1_FREQUENCY); 
 
-        match self.goal {
-            Goal::Attack(destination) | Goal::Reposition(destination) 
-                if gps_is_connected => {
-                self.movement_system.update_movement_direction(destination);
-                self.try_reach_goal();
+        match self.task {
+            Task::Attack(destination) 
+                | Task::Reconnect(destination)
+                | Task::Reposition(destination)
+                if gps_is_connected  => {
+                self.movement_system.set_direction(destination);
+                self.try_reach_task();
             },
-            Goal::Attack(_) | Goal::Reposition(_) => {
-                self.update_movement_direction_without_gps();
+            Task::Attack(_) 
+                | Task::Reposition(_) 
+                | Task::Reconnect(_) => {
+                self.set_horizontal_velocity();
             },
-            Goal::Undefined => ()
+            Task::Undefined          => ()
         }
     }
     
-    fn update_movement_direction_without_gps(&mut self) {
+    fn set_horizontal_velocity(&mut self) {
         let mut velocity = *self.movement_system.velocity();
 
         velocity.initial_point.z = 0.0;
@@ -466,6 +516,28 @@ impl Device {
         velocity.scale_to(self.movement_system.max_speed());
 
         self.movement_system.set_velocity(velocity);
+    }
+
+    fn handle_signal_loss(&mut self) {
+        match self.signal_loss_response {
+            SignalLossResponse::Ascend                   => {
+                let mut upward_point = self.real_position_in_meters;
+                upward_point.z += 1.0;
+
+                self.movement_system.set_direction(upward_point);
+                self.task = Task::Reconnect(upward_point);
+            },
+            SignalLossResponse::Hover                    => {
+                self.task = Task::Reconnect(self.real_position_in_meters);
+                self.process_task();
+            },
+            SignalLossResponse::ReturnToHome(home_point) => {
+                self.task = Task::Reconnect(home_point);
+                self.process_task();
+            },
+            SignalLossResponse::Shutdown                 =>
+                self.selfdestruction(),
+        }
     }
 
     fn update_real_position(&mut self) -> Result<(), DeviceError> {
@@ -484,35 +556,25 @@ impl Device {
         Ok(())
     }
 
-    fn try_consume_power(
-        &mut self, 
-        power: PowerUnit
-    ) -> Result<(), PowerSystemError> {
-        self.power_system
-            .try_consume_power(power)
-            .map_err(|error| {
-                self.selfdestruction();
-
-                error
-            })
-    }
-
-    // Device can check if it has reached the goal only if it knows
+    // Device can check if it has reached the task only if it knows
     // its current position (if it has GPS connection).
-    fn try_reach_goal(&mut self) {
-        match self.goal {
-            Goal::Attack(destination) 
-                if self.distance_to(&destination) <= DESTINATION_RADIUS => 
+    fn try_reach_task(&mut self) {
+        match self.task {
+            Task::Attack(destination) if 
+                self.at_destination(&destination) => 
                 self.selfdestruction(),
-            Goal::Reposition(destination) 
-                if self.distance_to(&destination) <= DESTINATION_RADIUS => 
-                self.goal = Goal::Undefined,
+            Task::Reposition(destination) if 
+                self.at_destination(&destination) => 
+                self.task = Task::Undefined,
             _ => (),
         }
     }
 
+    fn at_destination(&self, destination: &Point3D) -> bool {
+        self.distance_to(destination) <= DESTINATION_RADIUS 
+    }
+
     fn selfdestruction(&mut self) {
-        self.goal            = Goal::Undefined;
         self.power_system    = PowerSystem::default();
         self.movement_system = MovementSystem::default();
         self.trx_system      = TRXSystem::default();
@@ -590,7 +652,7 @@ mod tests {
     const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
     const EWD_TX_CONTROL_RADIUS: Meter   = 100.0;
     const EWD_TX_GPS_RADIUS: Meter       = 50.0;
-    const DEVICE_MAX_POWER: PowerUnit    = 1_000;
+    const DEVICE_MAX_POWER: PowerUnit    = 10_000;
     
 
     fn device_power_system() -> PowerSystem {
@@ -643,7 +705,21 @@ mod tests {
             rx_signal_levels
         ).unwrap()
     }
-    
+     
+    fn drone_green_rx_module(frequency: Megahertz) -> TRXModule {
+        let max_rx_signal_levels = HashMap::from([
+            (frequency, GREEN_SIGNAL_LEVEL)
+        ]);
+        let rx_signal_levels = HashMap::from([
+            (frequency, GREEN_SIGNAL_LEVEL)
+        ]);
+
+        TRXModule::build(
+            max_rx_signal_levels,
+            rx_signal_levels,
+        ).unwrap_or_else(|error| panic!("{}", error))
+    }
+   
     fn ewd_signal_levels() -> FreqToLevelMap {
         HashMap::from([
             (
@@ -668,31 +744,12 @@ mod tests {
             .unwrap_or_else(|error| panic!("{}", error))
     }
 
-    fn drone_green_rx_module(frequency: Megahertz) -> TRXModule {
-        let max_rx_signal_levels = HashMap::from([
-            (frequency, GREEN_SIGNAL_LEVEL)
-        ]);
-        let rx_signal_levels = HashMap::from([
-            (frequency, GREEN_SIGNAL_LEVEL)
-        ]);
-
-        TRXModule::build(
-            max_rx_signal_levels,
-            rx_signal_levels,
-        ).unwrap()   
-    }
-
     fn drone_green_rx_system(frequency: Megahertz) -> TRXSystem {
         TRXSystem::Color(drone_green_rx_module(frequency))
     }
 
-    fn reached_destination(drone: &Device, destination: &Point3D) -> bool {
-        drone.distance_to(destination) <= DESTINATION_RADIUS
-    }
-
     fn device_is_destructed(device: &Device) -> bool {
-        device.goal == Goal::Undefined
-        && device.power_system == PowerSystem::default()
+        device.power_system == PowerSystem::default()
         && device.trx_system == TRXSystem::default()
         && device.movement_system == MovementSystem::default()
     }
@@ -767,7 +824,7 @@ mod tests {
 
     #[test]
     fn device_selfdestructs_after_consuming_all_power() {
-        let goal  = Goal::Attack(Point3D::new(5.0, 5.0, 5.0));
+        let task  = Task::Attack(Point3D::new(5.0, 5.0, 5.0));
         let power = PASSIVE_POWER_CONSUMPTION + MOVEMENT_POWER_CONSUMPTION;
         
         let power_system    = PowerSystem::build(
@@ -779,13 +836,13 @@ mod tests {
         let trx_system      = drone_green_rx_system(WIFI_2_4GHZ_FREQUENCY);
 
         let mut device = DeviceBuilder::new()
-            .set_goal(goal)
+            .set_task(task)
             .set_power_system(power_system.clone())
             .set_movement_system(movement_system.clone())
             .set_trx_system(trx_system.clone())
             .build();
 
-        assert_eq!(device.goal, goal);
+        assert_eq!(device.task, task);
         assert_eq!(device.power_system, power_system);
         assert_eq!(device.trx_system, trx_system);
 
@@ -800,6 +857,167 @@ mod tests {
             matches!(device.update_state(), Err(_expected_error))
         );
         assert!(device_is_destructed(&device));
+    }
+
+    #[test]
+    fn ascending_on_signal_loss() {
+        let signal_loss_response = SignalLossResponse::Ascend;
+        let destination_point = Point3D::new(5.0, 5.0, 5.0);
+        let task = Task::Reposition(destination_point);
+        
+        let mut device_without_signal = DeviceBuilder::new()
+            .set_task(task)
+            .set_power_system(device_power_system())
+            .set_movement_system(drone_movement_system())
+            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .set_signal_loss_response(signal_loss_response)
+            .build();
+        let original_position = device_without_signal.real_position_in_meters;
+
+        let many_iterations = 10;
+        for _ in 0..many_iterations {
+            let gps_message = Message::new(
+                UNKNOWN_ID, 
+                device_without_signal.id(), 
+                0,
+                MessageType::GPS(*device_without_signal.position())
+            );
+            let _ = device_without_signal.receive_and_process_message(
+                &gps_message,
+                GPS_L1_FREQUENCY, 
+            );
+            
+            let _ = device_without_signal.update_state();
+        }
+
+        assert_eq!(
+            device_without_signal.real_position_in_meters.x,
+            original_position.x
+        );
+        assert_eq!(
+            device_without_signal.real_position_in_meters.y,
+            original_position.y
+        );
+        assert!(device_without_signal.real_position_in_meters.z > 0.0);
+    }
+    
+    #[test]
+    fn hovering_on_signal_loss() {
+        let signal_loss_response = SignalLossResponse::Hover;
+        let destination_point = Point3D::new(5.0, 5.0, 5.0);
+        let task = Task::Reposition(destination_point);
+        
+        let mut device_without_signal = DeviceBuilder::new()
+            .set_task(task)
+            .set_power_system(device_power_system())
+            .set_movement_system(drone_movement_system())
+            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .set_signal_loss_response(signal_loss_response)
+            .build();
+        let original_position = device_without_signal.real_position_in_meters;
+
+        let many_iterations = 500;
+        for _ in 0..many_iterations {
+            let gps_message = Message::new(
+                UNKNOWN_ID, 
+                device_without_signal.id(), 
+                0,
+                MessageType::GPS(*device_without_signal.position())
+            );
+            let _ = device_without_signal.receive_and_process_message(
+                &gps_message,
+                GPS_L1_FREQUENCY, 
+            );
+
+            let _ = device_without_signal.update_state();
+        }
+
+        assert_eq!(
+            device_without_signal.real_position_in_meters.x,
+            original_position.x
+        );
+        assert_eq!(
+            device_without_signal.real_position_in_meters.y,
+            original_position.y
+        );
+        assert_eq!(
+            device_without_signal.real_position_in_meters.z,
+            original_position.z
+        );
+    }
+    
+    #[test]
+    fn returning_to_home_on_signal_loss() {
+        let home_point = Point3D::new(
+            -MAX_DRONE_SPEED / 3.0, 
+            -MAX_DRONE_SPEED / 3.0, 
+            -MAX_DRONE_SPEED / 3.0
+        );
+        let signal_loss_response = SignalLossResponse::ReturnToHome(home_point);
+        let destination_point = Point3D::new(
+            MAX_DRONE_SPEED / 3.0, 
+            MAX_DRONE_SPEED / 3.0, 
+            MAX_DRONE_SPEED / 3.0
+        );
+        let task = Task::Reposition(destination_point);
+        
+        let mut device_without_signal = DeviceBuilder::new()
+            .set_task(task)
+            .set_power_system(device_power_system())
+            .set_movement_system(drone_movement_system())
+            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .set_signal_loss_response(signal_loss_response)
+            .build();
+
+        for _ in (0..500).step_by(STEP_DURATION as usize) {
+            let gps_message = Message::new(
+                UNKNOWN_ID, 
+                device_without_signal.id(), 
+                0,
+                MessageType::GPS(*device_without_signal.position())
+            );
+            assert!(
+                device_without_signal.receive_and_process_message(
+                    &gps_message,
+                    GPS_L1_FREQUENCY, 
+                ).is_ok()
+            );
+            
+            let _ = device_without_signal.update_state();
+        }
+
+        assert!(device_without_signal.at_destination(&home_point));
+    }
+    
+    #[test]
+    fn shutting_down_on_signal_loss() {
+        let signal_loss_response = SignalLossResponse::Shutdown;
+        let destination_point = Point3D::new(5.0, 5.0, 5.0);
+        let task = Task::Reposition(destination_point);
+        
+        let mut device_without_signal = DeviceBuilder::new()
+            .set_task(task)
+            .set_power_system(device_power_system())
+            .set_signal_loss_response(signal_loss_response)
+            .build();
+
+        let many_iterations = 500;
+        for _ in 0..many_iterations {
+            let gps_message = Message::new(
+                UNKNOWN_ID, 
+                device_without_signal.id(), 
+                0,
+                MessageType::GPS(*device_without_signal.position())
+            );
+            let _ = device_without_signal.receive_and_process_message(
+                &gps_message,
+                GPS_L1_FREQUENCY, 
+            );
+
+            let _ = device_without_signal.update_state();
+        }
+
+        assert!(device_is_destructed(&device_without_signal));
     }
     
     #[test]
@@ -876,7 +1094,6 @@ mod tests {
             .set_movement_system(drone_movement_system())
             .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
             .build();
-            
 
         assert_eq!(
             *device.gps_position(), 
@@ -888,7 +1105,7 @@ mod tests {
         );
 
         for _ in (0..1000).step_by(STEP_DURATION as usize) {
-            assert!(device.update_state().is_ok());
+            let _ = device.update_state();
 
             assert_eq!(
                 *device.gps_position(), 
@@ -904,16 +1121,16 @@ mod tests {
     #[test]
     fn device_movement_without_gps() {
         let destination_point = Point3D::new(MAX_DRONE_SPEED, 0.0, 0.0);
-        let goal              = Goal::Reposition(destination_point);
+        let task              = Task::Reposition(destination_point);
         
         let mut device_without_gps = DeviceBuilder::new()
-            .set_goal(goal)
+            .set_task(task)
             .set_power_system(device_power_system())
             .set_movement_system(drone_movement_system())
             .build();
 
         for _ in (0..1000).step_by(STEP_DURATION as usize) {
-            assert!(device_without_gps.update_state().is_ok());
+            let _ = device_without_gps.update_state();
         }
 
         assert_eq!(
@@ -929,13 +1146,29 @@ mod tests {
     #[test]
     fn device_reaching_destination() {
         let destination_point = Point3D::new(MAX_DRONE_SPEED, 0.0, 0.0);
-        let goal              = Goal::Reposition(destination_point);
+        let task              = Task::Reposition(destination_point);
+        let max_rx_signal_levels = HashMap::from([
+            (GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL),
+            (WIFI_2_4GHZ_FREQUENCY, GREEN_SIGNAL_LEVEL)
+        ]);
+        let rx_signal_levels = HashMap::from([
+            (GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL),
+            (WIFI_2_4GHZ_FREQUENCY, GREEN_SIGNAL_LEVEL)
+        ]);
+        let rx_module = TRXModule::build(
+            max_rx_signal_levels,
+            rx_signal_levels
+        ).unwrap();
+        let trx_system = TRXSystem::Strength { 
+            tx_module: TRXModule::default(), 
+            rx_module 
+        };
         
         let mut device = DeviceBuilder::new()
-            .set_goal(goal)
+            .set_task(task)
             .set_power_system(device_power_system())
             .set_movement_system(drone_movement_system())
-            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .set_trx_system(trx_system)
             .build();
             
         for _ in (0..1000).step_by(STEP_DURATION as usize) {
@@ -945,6 +1178,7 @@ mod tests {
                 0,
                 MessageType::GPS(*device.position())
             );
+            
             assert!(
                 device.receive_and_process_message(
                     &gps_message,
@@ -955,25 +1189,25 @@ mod tests {
             assert!(device.update_state().is_ok());
         }
 
-        assert!(reached_destination(&device, &destination_point));
+        assert!(device.at_destination(&destination_point));
     }
 
     #[test]
     fn device_selfdestruction() {
-        let goal            = Goal::Attack(Point3D::new(5.0, 5.0, 5.0));
+        let task            = Task::Attack(Point3D::new(5.0, 5.0, 5.0));
         let power_system    = device_power_system();
         let movement_system = MovementSystem::build(25.0)
             .unwrap_or_else(|error| panic!("{}", error));
         let trx_system      = drone_green_rx_system(WIFI_2_4GHZ_FREQUENCY);
 
         let mut device = DeviceBuilder::new()
-            .set_goal(goal)
+            .set_task(task)
             .set_power_system(power_system.clone())
             .set_trx_system(trx_system.clone())
             .set_movement_system(movement_system.clone())
             .build();
 
-        assert_eq!(device.goal, goal);
+        assert_eq!(device.task, task);
         assert_eq!(device.power_system, power_system);
         assert_eq!(device.trx_system, trx_system);
         assert_eq!(device.movement_system, movement_system);
@@ -984,9 +1218,9 @@ mod tests {
     }
 
     #[test]
-    fn receive_and_process_correct_set_goal_message() {
+    fn receive_and_process_correct_set_task_message() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
-        let goal      = Goal::Attack(Point3D::new(5.0, 0.0, 0.0));
+        let task      = Task::Attack(Point3D::new(5.0, 0.0, 0.0));
 
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
@@ -997,14 +1231,14 @@ mod tests {
             UNKNOWN_ID,
             device.id(),
             0, 
-            MessageType::SetGoal(goal)
+            MessageType::SetTask(task)
         );
 
         assert!(
             device.receive_and_process_message(&message, frequency)
                 .is_ok()
         );
-        assert_eq!(goal, device.goal);
+        assert_eq!(task, device.task);
     }
     
     #[test]
@@ -1040,7 +1274,7 @@ mod tests {
     #[test]
     fn receive_and_process_broadcast_message() {
         let frequency = WIFI_2_4GHZ_FREQUENCY;
-        let goal      = Goal::Attack(Point3D::new(5.0, 0.0, 0.0));
+        let task      = Task::Attack(Point3D::new(5.0, 0.0, 0.0));
         
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
@@ -1051,14 +1285,14 @@ mod tests {
             UNKNOWN_ID,
             BROADCAST_ID,
             0, 
-            MessageType::SetGoal(goal)
+            MessageType::SetTask(task)
         );
 
         assert!(
             device.receive_and_process_message(&message, frequency)
                 .is_ok()
         );
-        assert_eq!(goal, device.goal);
+        assert_eq!(task, device.task);
     }
 
     #[test]
@@ -1074,7 +1308,7 @@ mod tests {
             device.id() + 1,
             device.id() + 1,
             0, 
-            MessageType::SetGoal(Goal::Undefined)
+            MessageType::SetTask(Task::Undefined)
         );
 
         let _expected_error = DeviceError::TRXSystemError(

@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::ops;
 
 use impl_ops::{
@@ -270,6 +271,18 @@ impl_op_ex!(
         SignalLevel(SignalLevelInner::from(a.strength() + b.value()))
     }
 );
+
+impl PartialEq<MessageCost> for &SignalLevel {
+    fn eq(&self, other: &MessageCost) -> bool {
+        self.strength().value() == other.value()
+    }
+}
+
+impl PartialOrd<MessageCost> for &SignalLevel {
+    fn partial_cmp(&self, other: &MessageCost) -> Option<Ordering> {
+       self.strength().value().partial_cmp(&other.value()) 
+    }
+}
 
 impl From<f32> for SignalLevel {
     fn from(value: f32) -> Self {

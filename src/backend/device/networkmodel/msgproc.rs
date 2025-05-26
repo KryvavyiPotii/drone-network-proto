@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-use crate::backend::device::{DeviceId, IdToDeviceMap, UNKNOWN_ID};
+use crate::backend::device::{
+    DeviceId, IdToDeviceMap, IdToTaskMap, BROADCAST_ID, UNKNOWN_ID
+};
 use crate::backend::mathphysics::{Millisecond, Position};
 use crate::backend::message::{Message, MessageType, MessageQueue};
 use crate::backend::signal::{GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL};
@@ -23,6 +25,29 @@ pub enum UnicastMessageError {
     TooEarly,
 }
 
+
+pub fn try_add_task(
+    message: &Message,
+    current_tasks: &mut IdToTaskMap,
+    device_map: &IdToDeviceMap,
+) {
+    if !message.is_in_progress() {
+        return;
+    }
+    let MessageType::SetTask(task) = *message.message_type() else {
+        return;
+    };
+
+    let destination_id = message.destination_id();
+    if destination_id != BROADCAST_ID {
+        current_tasks.insert(destination_id, task);
+        return;
+    }
+
+    for device_id in device_map.ids() {
+        current_tasks.insert(*device_id, task);
+    }    
+}
 
 /// # Errors
 ///
@@ -99,7 +124,7 @@ mod tests {
     };
     use crate::backend::device::systems::TRXModule;
     use crate::backend::mathphysics::{Meter, Point3D, PowerUnit};
-    use crate::backend::message::{Goal, Message};
+    use crate::backend::message::{Task, Message};
     use crate::backend::signal::{
         SignalArea, SignalLevel, NO_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, 
         WIFI_2_4GHZ_FREQUENCY
@@ -197,7 +222,7 @@ mod tests {
             UNKNOWN_ID,
             BROADCAST_ID,
             current_time, 
-            MessageType::SetGoal(Goal::Undefined)
+            MessageType::SetTask(Task::Undefined)
         );
         message.process();
 
@@ -216,7 +241,7 @@ mod tests {
             UNKNOWN_ID,
             BROADCAST_ID,
             50, 
-            MessageType::SetGoal(Goal::Undefined)
+            MessageType::SetTask(Task::Undefined)
         );
 
         assert!(
@@ -234,7 +259,7 @@ mod tests {
             UNKNOWN_ID,
             BROADCAST_ID,
             current_time, 
-            MessageType::SetGoal(Goal::Undefined)
+            MessageType::SetTask(Task::Undefined)
         );
 
         assert!(

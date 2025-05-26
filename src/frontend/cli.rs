@@ -39,7 +39,7 @@ const DEFAULT_PLOT_CAPTION:     &str = "";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.12.0")
+        .version("0.13.0")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
@@ -382,6 +382,22 @@ fn run_example_by_number(example_number: u8) {
             )
         ),
         22 => examples::dos(
+            &Config::new(
+                "Stateful Model (Mesh)",
+                false,
+                NetworkModelType::Stateful,
+                Topology::Mesh
+            )
+        ),
+        23 => examples::signal_loss_response(
+            &Config::new(
+                "Stateless Model (Mesh)",
+                false,
+                NetworkModelType::Stateless(0.0),
+                Topology::Mesh
+            )
+        ),
+        24 => examples::signal_loss_response(
             &Config::new(
                 "Stateful Model (Mesh)",
                 false,

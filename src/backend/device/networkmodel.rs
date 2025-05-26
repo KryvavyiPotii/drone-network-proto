@@ -3,7 +3,7 @@ use std::collections::hash_map::Values;
 use crate::backend::mathphysics::{Megahertz, Point3D};
 use crate::backend::message::Message;
 
-use super::{Device, DeviceId, IdToDeviceMap, IdToGoalMap};
+use super::{Device, DeviceId, IdToDeviceMap, IdToTaskMap};
 use super::connections::Topology;
 
 use attack::AttackerDevice;
@@ -66,10 +66,10 @@ impl NetworkModel {
     }
 
     #[must_use]
-    pub fn goals(&self) -> IdToGoalMap {
+    pub fn device_tasks(&self) -> IdToTaskMap {
         match self {
-            Self::Stateful(stateful_model)   => stateful_model.goals(),
-            Self::Stateless(stateless_model) => stateless_model.goals(),
+            Self::Stateful(stateful_model)   => stateful_model.device_tasks(),
+            Self::Stateless(stateless_model) => stateless_model.device_tasks(),
         }
     }
 

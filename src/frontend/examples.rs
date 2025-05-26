@@ -4,7 +4,8 @@ use std::ops::Range;
 use rand::prelude::*;
 
 use crate::backend::device::{
-    BROADCAST_ID, Device, DeviceBuilder, DeviceId, Topology, MAX_DRONE_SPEED, 
+    Device, DeviceBuilder, DeviceId, SignalLossResponse, Topology, BROADCAST_ID, 
+    MAX_DRONE_SPEED 
 };
 use crate::backend::device::networkmodel::{
     NetworkModelBuilder, NetworkModelType
@@ -15,7 +16,7 @@ use crate::backend::device::systems::{
 };
 use crate::backend::malware::{Malware, MalwareType};
 use crate::backend::mathphysics::{Megahertz, Meter, Point3D, PowerUnit};
-use crate::backend::message::{Goal, Message, MessageType};
+use crate::backend::message::{Task, Message, MessageType};
 use crate::backend::signal::{
     SignalArea, SignalLevel, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
     RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
@@ -64,9 +65,10 @@ fn cc_trx_system(
 
     match antenna {
         AntennaType::Color    => TRXSystem::Color(tx_module),
-        AntennaType::Strength => TRXSystem::Strength { 
-            tx_module, 
-            rx_module: TRXModule::default()
+        AntennaType::Strength => {
+            let rx_module = tx_module.clone();
+
+            TRXSystem::Strength { tx_module, rx_module }
         }
     }
 }
@@ -152,19 +154,22 @@ fn ewd_trx_system(
 }
 
 fn device_power_system() -> PowerSystem {
-    PowerSystem::build(
-        DEVICE_MAX_POWER, 
-        DEVICE_MAX_POWER
-    ).unwrap_or_else(|error| panic!("{}", error))
+    PowerSystem::build(DEVICE_MAX_POWER, DEVICE_MAX_POWER)
+        .unwrap_or_else(|error| panic!("{}", error))
+}
+
+fn device_movement_system() -> MovementSystem {
+    MovementSystem::build(MAX_DRONE_SPEED)
+        .unwrap_or_else(|error| panic!("{}", error))
 }
 
 fn default_movement_scenario(
     command_center_id: DeviceId
 ) -> Vec<(Megahertz, Message)> {
-    let goal1 = Goal::Attack(DRONE_DESTINATION);
-    let goal2 = Goal::Attack(Point3D::new(0.0, 0.0, 150.0));
-    let goal3 = Goal::Attack(Point3D::new(0.0, 150.0, 150.0));
-    let goal4 = goal1;
+    let task1 = Task::Attack(DRONE_DESTINATION);
+    let task2 = Task::Attack(Point3D::new(0.0, 0.0, 150.0));
+    let task3 = Task::Attack(Point3D::new(0.0, 150.0, 150.0));
+    let task4 = task1;
 
     vec!(
         (
@@ -173,7 +178,7 @@ fn default_movement_scenario(
                 command_center_id,
                 BROADCAST_ID,
                 0, 
-                MessageType::SetGoal(goal1)
+                MessageType::SetTask(task1)
             )
         ),
         (
@@ -182,7 +187,7 @@ fn default_movement_scenario(
                 command_center_id,
                 BROADCAST_ID,
                 250, 
-                MessageType::SetGoal(goal2) 
+                MessageType::SetTask(task2) 
             )
         ),
         (
@@ -191,7 +196,7 @@ fn default_movement_scenario(
                 command_center_id,
                 BROADCAST_ID,
                 4000, 
-                MessageType::SetGoal(goal3) 
+                MessageType::SetTask(task3) 
             )
         ),
         (
@@ -200,7 +205,7 @@ fn default_movement_scenario(
                 command_center_id,
                 BROADCAST_ID,
                 6000, 
-                MessageType::SetGoal(goal4) 
+                MessageType::SetTask(task4) 
             )
         ),
     )
@@ -231,8 +236,7 @@ fn create_device_vec(
     let mut rng = rand::rng();
 
     let power_system    = device_power_system();
-    let movement_system = MovementSystem::build(MAX_DRONE_SPEED)
-        .unwrap_or_else(|error| panic!("{}", error));
+    let movement_system = device_movement_system();
     let trx_system      = drone_trx_system(
         antenna, 
         tx_control_area_radius,
@@ -351,7 +355,7 @@ pub fn gps_only(config: &Config) {
                 command_center_id,
                 BROADCAST_ID,
                 0, 
-                MessageType::SetGoal(Goal::Attack(DRONE_DESTINATION))
+                MessageType::SetTask(Task::Attack(DRONE_DESTINATION))
             )
         ),
     );
@@ -438,7 +442,7 @@ pub fn gps_and_control(config: &Config) {
                 command_center_id,
                 BROADCAST_ID,
                 0, 
-                MessageType::SetGoal(Goal::Attack(DRONE_DESTINATION))
+                MessageType::SetTask(Task::Attack(DRONE_DESTINATION))
             )
         ),
     );
@@ -936,7 +940,7 @@ pub fn gps_spoofing(config: &Config) {
                 command_center_id,
                 BROADCAST_ID,
                 0, 
-                MessageType::SetGoal(Goal::Attack(DRONE_DESTINATION))
+                MessageType::SetTask(Task::Attack(DRONE_DESTINATION))
             )
         ),
     );
@@ -1070,6 +1074,99 @@ pub fn dos(config: &Config) {
         1.57
     );
 
+    let mut simulation = Simulation::new(
+        end_time,
+        vec![drone_network],
+        renderer
+    );
+
+    simulation.run();
+}
+
+pub fn signal_loss_response(config: &Config) {
+    let antenna = config.antenna();
+    let cc_tx_control_area_radius           = 0.0;
+    let drone_tx_control_area_radius        = 50.0;
+    let drone_gps_rx_signal_level           = RED_SIGNAL_LEVEL; 
+
+    let command_center = DeviceBuilder::new()
+        .set_real_position(COMMAND_CENTER_POSITION)
+        .set_power_system(device_power_system())
+        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .build();
+    let command_center_id = command_center.id();
+   
+    let drone_builder = DeviceBuilder::new()
+        .set_real_position(NETWORK_ORIGIN)
+        .set_power_system(device_power_system())
+        .set_movement_system(device_movement_system())
+        .set_trx_system(
+            drone_trx_system(
+                &antenna, 
+                drone_tx_control_area_radius, 
+                drone_gps_rx_signal_level
+            )
+        );
+
+    let ascend_drone = drone_builder
+        .clone()
+        .set_signal_loss_response(SignalLossResponse::Ascend)
+        .build();
+    let hover_drone = drone_builder
+        .clone()
+        .set_signal_loss_response(SignalLossResponse::Hover)
+        .build();
+    let rth_drone = drone_builder
+        .clone()
+        .set_signal_loss_response(
+            SignalLossResponse::ReturnToHome(COMMAND_CENTER_POSITION)
+        )
+        .build();
+    let shutdown_drone = drone_builder
+        .set_signal_loss_response(SignalLossResponse::Shutdown)
+        .build();
+
+    let devices = [
+        command_center, 
+        ascend_drone, 
+        hover_drone, 
+        rth_drone, 
+        shutdown_drone
+    ]; 
+    
+    let scenario = vec!(
+        (
+            WIFI_2_4GHZ_FREQUENCY,
+            Message::new(
+                command_center_id,
+                BROADCAST_ID,
+                0, 
+                MessageType::SetTask(Task::Attack(DRONE_DESTINATION))
+            )
+        ),
+    );
+
+    let drone_network = NetworkModelBuilder::new(config.network_model)
+        .set_command_center_id(command_center_id)
+        .set_devices(&devices)
+        .set_topology(config.topology)
+        .set_scenario(scenario)
+        .build();
+ 
+    let end_time = 5_000;
+
+    let output_filename = derive_filename(config, "signal_loss_response"); 
+    let drone_colorings = vec![DeviceColoring::Signal]; 
+    let renderer        = PlottersRenderer::new(
+        &output_filename,
+        &config.plot_caption,
+        PLOT_RESOLUTION,
+        Axes3DRanges::default(),
+        &drone_colorings,
+        0.15,
+        0.5,
+    );
+    
     let mut simulation = Simulation::new(
         end_time,
         vec![drone_network],
