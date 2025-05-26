@@ -18,11 +18,11 @@ pub use queue::MessageQueue;
 pub mod queue;
 
 
-const GPS_COST: MessageCost           = MessageCost(3.0);
+const GPS_COST: MessageCost           = MessageCost(5.0);
 const MAL_INDICATOR_COST: MessageCost = MessageCost(1.0);
-const MAL_JAMMING_COST: MessageCost   = MessageCost(2.0);
-const MAL_DOS_COST: MessageCost       = MessageCost(1.0);
-const SET_TASK_COST: MessageCost      = MessageCost(5.0); 
+const MAL_JAMMING_COST: MessageCost   = MessageCost(15.0);
+const MAL_DOS_COST: MessageCost       = MessageCost(10.0);
+const SET_TASK_COST: MessageCost      = MessageCost(10.0); 
 
 
 fn message_transmission_cost(message_type: &MessageType) -> MessageCost {

@@ -257,13 +257,13 @@ fn create_device_vec(
                 .set_real_position(position)
                 .set_power_system(power_system.clone())
                 .set_movement_system(movement_system.clone())
-                .set_trx_system(trx_system.clone());
+                .set_trx_system(trx_system.clone())
+                .set_signal_loss_response(SignalLossResponse::Ignore);
 
             let drone_builder = if rand::random_bool(
                 VULNERABILITY_PROBABILITY
             ) {
-                drone_builder
-                    .set_vulnerabilities(vulnerabilities)
+                drone_builder.set_vulnerabilities(vulnerabilities)
             } else {
                 drone_builder
             };
@@ -1085,9 +1085,10 @@ pub fn dos(config: &Config) {
 
 pub fn signal_loss_response(config: &Config) {
     let antenna = config.antenna();
-    let cc_tx_control_area_radius           = 0.0;
-    let drone_tx_control_area_radius        = 50.0;
-    let drone_gps_rx_signal_level           = RED_SIGNAL_LEVEL; 
+    let cc_tx_control_area_radius    = 600.0;
+    let drone_tx_control_area_radius = 50.0;
+    let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
+    let control_ewd_suppression_area_radius = 150.0;
 
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)
@@ -1146,14 +1147,30 @@ pub fn signal_loss_response(config: &Config) {
         ),
     );
 
+    let ewd_control = DeviceBuilder::new()
+        .set_real_position(Point3D::new(-10.0, 2.0, 0.0))
+        .set_power_system(device_power_system())
+        .set_trx_system(
+            ewd_trx_system(
+                &antenna,
+                WIFI_2_4GHZ_FREQUENCY,
+                control_ewd_suppression_area_radius
+            )
+        )
+        .build();
+    let attacker_devices = [
+        AttackerDevice::new(ewd_control, AttackType::ElectronicWarfare)
+    ];
+    
     let drone_network = NetworkModelBuilder::new(config.network_model)
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
+        .set_attacker_devices(&attacker_devices)
         .set_topology(config.topology)
         .set_scenario(scenario)
         .build();
  
-    let end_time = 5_000;
+    let end_time = 15_000;
 
     let output_filename = derive_filename(config, "signal_loss_response"); 
     let drone_colorings = vec![DeviceColoring::Signal]; 

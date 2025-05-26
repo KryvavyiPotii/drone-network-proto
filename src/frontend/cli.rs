@@ -39,7 +39,7 @@ const DEFAULT_PLOT_CAPTION:     &str = "";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.13.0")
+        .version("0.13.1")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)

@@ -70,9 +70,10 @@ pub enum DeviceError {
 #[derive(Clone, Copy, Debug, Default)]
 pub enum SignalLossResponse {
     Ascend,
+    #[default]
+    Ignore,
     Hover,
     ReturnToHome(Point3D), // Point3D is a home point
-    #[default]
     Shutdown,
 }
 
@@ -531,6 +532,8 @@ impl Device {
                 self.task = Task::Reconnect(self.real_position_in_meters);
                 self.process_task();
             },
+            SignalLossResponse::Ignore                   =>
+                (),
             SignalLossResponse::ReturnToHome(home_point) => {
                 self.task = Task::Reconnect(home_point);
                 self.process_task();
