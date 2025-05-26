@@ -23,7 +23,7 @@ const CIRCLE_SIZE_COEFFICIENT: u32         = 400;
 const PLOT_MARGIN: u32                     = 20;
 
 const PLOTTERS_DESTINATION_COLOR: RGBColor    = YELLOW;
-const PLOTTERS_COMMAND_CENTER_COLOR: RGBColor = BLUE;
+const PLOTTERS_COMMAND_CENTER_COLOR: RGBColor = GREEN;
 
 
 type PlottersChartContext<'a> = ChartContext<

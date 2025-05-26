@@ -1177,7 +1177,7 @@ pub fn signal_loss_response(config: &Config) {
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        PLOT_RESOLUTION,
+        (800, 800),
         Axes3DRanges::default(),
         &drone_colorings,
         0.15,

@@ -39,13 +39,12 @@ const DEFAULT_PLOT_CAPTION:     &str = "";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.13.1")
+        .version("0.13.2")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
                 .short('c')
                 .long("caption")
-                .conflicts_with(ARG_EXAMPLE_NUMBER)
                 .default_value(DEFAULT_PLOT_CAPTION)
                 .help("Set the plot caption")
         )
@@ -69,6 +68,8 @@ pub fn cli() {
             Arg::new(ARG_EXPERIMENT_TITLE)
                 .short('x')
                 .long("experiment")
+                .requires(ARG_NETWORK_MODEL)
+                .requires(ARG_NETWORK_TOPOLOGY)
                 .requires_if(EXP_INFECTION, ARG_INFECTION_TYPE)
                 .value_parser([
                     EXP_COMMAND_DELAYS,
@@ -93,6 +94,7 @@ pub fn cli() {
                 .short('d')
                 .long("delay-multiplier")
                 .value_parser(clap::value_parser!(f32))
+                .requires_if(NM_STATELESS, ARG_NETWORK_MODEL)
                 .default_value(DEFAULT_DELAY_MULTIPLIER)
                 .help("Set communication delay for complex network model")
         )
