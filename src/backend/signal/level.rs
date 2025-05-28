@@ -58,14 +58,15 @@ pub fn signal_level_change_happens(signal_level: SignalLevel) -> bool {
 }
 
 fn signal_level_change_probability(signal_level: SignalLevel) -> f64 {
-    if signal_level.is_green() {
-        CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY
-    } else if signal_level.is_yellow() {
-        CHANGE_SIGNAL_LEVEL_FROM_YELLOW_PROBABILITY
-    } else if signal_level.is_red() {
-        CHANGE_SIGNAL_LEVEL_FROM_RED_PROBABILITY
-    } else {
-        CHANGE_SIGNAL_LEVEL_FROM_BLACK_PROBABILITY
+    match signal_level.0 {
+        SignalLevelInner::Green(_)  =>
+            CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY,
+        SignalLevelInner::Yellow(_) =>
+            CHANGE_SIGNAL_LEVEL_FROM_YELLOW_PROBABILITY,
+        SignalLevelInner::Red(_)    =>
+            CHANGE_SIGNAL_LEVEL_FROM_RED_PROBABILITY,
+        SignalLevelInner::Black(_)  =>
+            CHANGE_SIGNAL_LEVEL_FROM_BLACK_PROBABILITY,
     }
 }
 

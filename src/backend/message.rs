@@ -92,11 +92,11 @@ impl_op_ex!(
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Task {
-    #[default]
-    Undefined,
+    Attack(Point3D),
     Reconnect(Point3D),
     Reposition(Point3D),
-    Attack(Point3D),
+    #[default]
+    Undefined,
 }
 
 
