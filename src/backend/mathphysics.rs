@@ -1,3 +1,5 @@
+use super::ITERATION_TIME;
+
 pub use point::Point3D;
 pub use unit::*;
 pub use vector::Vector3D;
@@ -12,6 +14,21 @@ pub const INVALID_POSITION: Point3D = Point3D {
     x: f32::NAN, y: f32::NAN, z: f32::NAN
 };
 
+
+#[must_use]
+pub fn delay_to(distance: Meter, multiplier: f32) -> Millisecond {    
+    if multiplier == 0.0 {
+        return 0;
+    }
+
+    let delay = time_in_millis_from_distance_and_speed(
+        distance * multiplier as Meter,
+        kmps_to_mpms(SPEED_OF_LIGHT) 
+    );
+    let reminder = delay % ITERATION_TIME;
+    
+    delay - reminder
+}
 
 #[must_use]
 pub fn equation_of_motion_1d(

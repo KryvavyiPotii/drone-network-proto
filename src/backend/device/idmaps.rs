@@ -8,14 +8,23 @@ use crate::backend::signal::{SignalLevel, NO_SIGNAL_LEVEL};
 use super::{Device, DeviceId};
 
 
+// Used for storing message transmission delays between devices which are
+// connected to the same network. Delays between devices which are connected
+// to different networks are stored in the `Message.execution_time` field. 
+pub type IdToDelayMap = HashMap<DeviceId, i32>;
 pub type IdToLevelMap = HashMap<DeviceId, SignalLevel>;
 pub type IdToTaskMap  = HashMap<DeviceId, Task>;
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct IdToDeviceMap(HashMap<DeviceId, Device>);
 
 impl IdToDeviceMap {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
     #[must_use]
     pub fn get(&self, device_id: &DeviceId) -> Option<&Device> {
         self.0.get(device_id)
@@ -81,6 +90,13 @@ impl IdToDeviceMap {
         self.0.remove(device_id)
     }
 
+    pub fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&DeviceId, &mut Device) -> bool
+    {
+        self.0.retain(f);
+    }
+
     pub fn update_states(&mut self) {
         self.0
             .values_mut()
@@ -95,18 +111,6 @@ impl IdToDeviceMap {
             .for_each(Device::handle_infection);
     }
 
-    pub fn remove_not_receiving_devices(
-        &mut self, 
-        command_device_id: &DeviceId, 
-        frequency: Megahertz
-    ) { 
-        // Command device must not be accidentally deleted even if it does not
-        // receive control frequency.
-        self.0.retain(|device_id, device| 
-            device.receives_signal(frequency) || device_id == command_device_id 
-        );
-    }
-    
     pub fn set_tx_signal_level(
         &mut self,
         signal_level: &SignalLevel,
@@ -245,44 +249,7 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn removing_not_receiving_devices_and_leaving_command_device() {
-        let frequency = 500;
-        let trx_system = TRXSystem::Strength { 
-            tx_module: TRXModule::default(), 
-            rx_module: TRXModule::build(
-                HashMap::from([(frequency, GREEN_SIGNAL_LEVEL)]),
-                HashMap::from([(frequency, GREEN_SIGNAL_LEVEL)]),
-            ).unwrap_or_else(|error| panic!("{}", error)) 
-        };
-
-        let command_device = DeviceBuilder::new().build();
-        let not_receiving_device = DeviceBuilder::new().build();
-        let receiving_device = DeviceBuilder::new()
-            .set_trx_system(trx_system)
-            .build();
-        
-        let command_device_id = command_device.id();
-        let not_receiving_device_id = not_receiving_device.id();
-        let receiving_device_id = receiving_device.id();
-
-        let mut device_map = IdToDeviceMap::from(
-            [command_device, not_receiving_device, receiving_device]
-        );
-
-        assert_eq!(device_map.len(), 3);
-        assert!(device_map.get(&command_device_id).is_some());
-        assert!(device_map.get(&not_receiving_device_id).is_some());
-        assert!(device_map.get(&receiving_device_id).is_some());
-
-        device_map.remove_not_receiving_devices(&command_device_id, frequency);
-
-        assert_eq!(device_map.len(), 2);
-        assert!(device_map.get(&command_device_id).is_some());
-        assert!(device_map.get(&not_receiving_device_id).is_none());
-        assert!(device_map.get(&receiving_device_id).is_some());
-    }
-
+    
     #[test]
     fn skip_absent_device_ids_on_setting_rx_signal_levels() {
         let frequency1 = 500;

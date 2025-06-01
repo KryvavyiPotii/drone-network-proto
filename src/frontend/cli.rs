@@ -1,18 +1,23 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
-use crate::backend::device::Topology;
-use crate::backend::device::networkmodel::NetworkModelType;
+use crate::backend::connections::Topology;
+use crate::backend::mathphysics::Millisecond;
+use crate::backend::networkmodel::NetworkModelType;
 
 use super::examples;
 
 
+const ARG_DELAY_MULTIPLIER: &str = "delay multiplier";
 const ARG_DISPLAY_DELAYLESS_NETWORK: &str = "display delayless network";
 const ARG_EXAMPLE_NUMBER: &str   = "example number";
 const ARG_EXPERIMENT_TITLE: &str = "experiment title";
+const ARG_PLOT_HEIGHT: &str      = "plot height";
+const ARG_PLOT_WIDTH: &str       = "plot width";
 const ARG_INFECTION_TYPE: &str   = "infection type";
 const ARG_NETWORK_MODEL: &str    = "network model";
 const ARG_NETWORK_TOPOLOGY: &str = "network topology";
 const ARG_SC_MOVEMENT: &str      = "signal color movement";
+const ARG_SIM_TIME: &str         = "simulation time";
 const ARG_PLOT_CAPTION: &str     = "plot caption";
 
 const EXP_COMMAND_DELAYS: &str  = "delays";
@@ -26,20 +31,23 @@ const EXP_INFECTION: &str       = "infection";
 const INF_INDICATOR: &str = "indicator";
 const INF_JAMMING: &str   = "jamming";
 
-const NM_STATEFUL: &str    = "sf";
-const NM_STATELESS: &str   = "sl";
-const SLNM_DELAY_MULTIPLIER: &str = "delay multiplier";
+const NM_STATEFUL: &str  = "sf";
+const NM_STATELESS: &str = "sl";
 
 const TOPOLOGY_MESH: &str = "mesh";
 const TOPOLOGY_STAR: &str = "star";
 
 const DEFAULT_DELAY_MULTIPLIER: &str = "0.0";
-const DEFAULT_PLOT_CAPTION:     &str = "";
+
+const DEFAULT_PLOT_CAPTION: &str = "";
+const DEFAULT_PLOT_HEIGHT: &str  = "300";
+const DEFAULT_PLOT_WIDTH: &str   = "400";
+const DEFAULT_SIM_TIME: &str     = "15000";
 
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.13.3")
+        .version("0.14.0")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
@@ -47,6 +55,29 @@ pub fn cli() {
                 .long("caption")
                 .default_value(DEFAULT_PLOT_CAPTION)
                 .help("Set the plot caption")
+        )
+        .arg(
+            Arg::new(ARG_PLOT_WIDTH)
+                .long("width")
+                .requires(ARG_PLOT_HEIGHT)
+                .value_parser(clap::value_parser!(u16))
+                .default_value(DEFAULT_PLOT_WIDTH)
+                .help("Set the plot width")
+        )
+        .arg(
+            Arg::new(ARG_PLOT_HEIGHT)
+                .long("height")
+                .requires(ARG_PLOT_WIDTH)
+                .value_parser(clap::value_parser!(u16))
+                .default_value(DEFAULT_PLOT_HEIGHT)
+                .help("Set the plot height")
+        )
+        .arg(
+            Arg::new(ARG_SIM_TIME)
+                .long("time")
+                .value_parser(clap::value_parser!(Millisecond))
+                .default_value(DEFAULT_SIM_TIME)
+                .help("Set the simulation time")
         )
         .arg(
             Arg::new(ARG_EXAMPLE_NUMBER)
@@ -90,13 +121,12 @@ pub fn cli() {
                 .help("Choose network model")
         )
         .arg(
-            Arg::new(SLNM_DELAY_MULTIPLIER)
+            Arg::new(ARG_DELAY_MULTIPLIER)
                 .short('d')
                 .long("delay-multiplier")
                 .value_parser(clap::value_parser!(f32))
-                .requires_if(NM_STATELESS, ARG_NETWORK_MODEL)
                 .default_value(DEFAULT_DELAY_MULTIPLIER)
-                .help("Set communication delay for complex network model")
+                .help("Set signal transmission delay multiplier")
         )
         .arg(
             Arg::new(ARG_NETWORK_TOPOLOGY)
@@ -109,20 +139,35 @@ pub fn cli() {
             Arg::new(ARG_DISPLAY_DELAYLESS_NETWORK)
                 .long("display-delayless")
                 .action(ArgAction::SetTrue)
-                .help("Show the same network model without delays as well")
+                .help(
+                    format!(
+                        "Show the same network model without delays as \
+                        well (\"{EXP_COMMAND_DELAYS}\" experiment)" 
+                    )
+                )
         )
         .arg(
             Arg::new(ARG_SC_MOVEMENT)
                 .long("dynamic")
                 .action(ArgAction::SetTrue)
-                .help("Show signal colors when drones are moving")
+                .help(
+                    format!(
+                        "Show signal colors when drones are moving \
+                        (\"{EXP_SIGNAL_COLOR}\" experiment)"
+                    )
+                )
         )
         .arg(
             Arg::new(ARG_INFECTION_TYPE)
                 .short('i')
                 .long("infection")
                 .value_parser([INF_INDICATOR, INF_JAMMING])
-                .help("Choose infection type")
+                .help(
+                    format!(
+                        "Choose infection type \
+                        (\"{EXP_INFECTION}\" experiment)"
+                    )
+                )
         )
         .arg_required_else_help(true)
         .get_matches();
@@ -131,8 +176,22 @@ pub fn cli() {
 }
 
 fn handle_arguments(matches: &ArgMatches) {
+    let plot_width = *matches
+        .get_one::<u16>(ARG_PLOT_WIDTH)
+        .unwrap();
+    let plot_height = *matches
+        .get_one::<u16>(ARG_PLOT_HEIGHT)
+        .unwrap();
+    let simulation_time = *matches
+        .get_one::<Millisecond>(ARG_SIM_TIME)
+        .unwrap();
+    
     if let Some(example_number) = matches.get_one::<u8>(ARG_EXAMPLE_NUMBER) {
-        run_example_by_number(*example_number);
+        run_example_by_number(
+            *example_number,
+            (plot_width, plot_height),
+            simulation_time,
+        );
         return;
     }
     
@@ -153,16 +212,8 @@ fn handle_arguments(matches: &ArgMatches) {
         .unwrap()
         .as_str()
     {
-        NM_STATEFUL  => { 
-            NetworkModelType::Stateful
-        },
-        NM_STATELESS => {
-            let delay_multiplier = matches
-                .get_one::<f32>(SLNM_DELAY_MULTIPLIER)
-                .unwrap();
-
-            NetworkModelType::Stateless(*delay_multiplier)
-        },
+        NM_STATEFUL  => NetworkModelType::Stateful,
+        NM_STATELESS => NetworkModelType::Stateless,
         _ => return,
     };
     let topology = match matches
@@ -174,12 +225,18 @@ fn handle_arguments(matches: &ArgMatches) {
         TOPOLOGY_STAR => Topology::Star,
         _ => return,
     };
+    let delay_multiplier = matches
+        .get_one::<f32>(ARG_DELAY_MULTIPLIER)
+        .unwrap();
 
     let config = Config::new(
         plot_caption, 
+        (plot_width, plot_height),
+        simulation_time,
         display_delayless_network, 
         network_model, 
-        topology
+        topology,
+        *delay_multiplier,
     );
 
     match experiment_title.as_str() {
@@ -213,198 +270,296 @@ fn handle_arguments(matches: &ArgMatches) {
     }
 }
 
-fn run_example_by_number(example_number: u8) {
+fn run_example_by_number(
+    example_number: u8,
+    plot_resolution: (u16, u16),
+    simulation_time: Millisecond,
+) {
     match example_number {
         1  => examples::gps_only(
             &Config::new(
                 "Stateless Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(0.0),
-                Topology::Star
+                NetworkModelType::Stateless,
+                Topology::Star,
+                0.0,
             )
         ),
         2  => examples::gps_and_control(
             &Config::new(
                 "Stateless Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(0.0),
-                Topology::Star
+                NetworkModelType::Stateless,
+                Topology::Star,
+                0.0,
             )
         ),
         3  => examples::command_delay(
             &Config::new(
                 "Stateless Model (Star)",
+                plot_resolution,
+                simulation_time,
                 true,
-                NetworkModelType::Stateless(1.0),
-                Topology::Star
+                NetworkModelType::Stateless,
+                Topology::Star,
+                1_000_000.0,
             )
         ),
         4  => examples::signal_color(
             &Config::new(
                 "Stateless Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(0.0),
-                Topology::Star
+                NetworkModelType::Stateless,
+                Topology::Star,
+                0.0,
             )
         ),
         5  => examples::infection(
             &Config::new(
                 "Stateless Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(1.0),
-                Topology::Star
+                NetworkModelType::Stateless,
+                Topology::Star,
+                1_000_000.0,
             )
         ),
         6  => examples::dos(
             &Config::new(
                 "Stateless Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(1.0),
-                Topology::Star
+                NetworkModelType::Stateless,
+                Topology::Star,
+                10_000_000.0,
             )
         ),
         7  => examples::gps_only(
             &Config::new(
                 "Stateless Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(0.0),
-                Topology::Mesh
+                NetworkModelType::Stateless,
+                Topology::Mesh,
+                0.0,
             )
         ),
         8  => examples::gps_and_control(
             &Config::new(
                 "Stateless Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(0.0),
-                Topology::Mesh
+                NetworkModelType::Stateless,
+                Topology::Mesh,
+                0.0,
             )
         ),
         9  => examples::command_delay(
             &Config::new(
                 "Stateless Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 true,
-                NetworkModelType::Stateless(1.0),
-                Topology::Mesh
+                NetworkModelType::Stateless,
+                Topology::Mesh,
+                1_000_000.0,
             )
         ),
         10 => examples::signal_color(
             &Config::new(
                 "Stateless Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(0.0),
-                Topology::Mesh
+                NetworkModelType::Stateless,
+                Topology::Mesh,
+                0.0,
             )
         ),
         11 => examples::infection(
             &Config::new(
                 "Stateless Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(1.0),
-                Topology::Mesh
+                NetworkModelType::Stateless,
+                Topology::Mesh,
+                1_000_000.0,
             )
         ),
         12 => examples::dos(
             &Config::new(
                 "Stateless Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(1.0),
-                Topology::Mesh
+                NetworkModelType::Stateless,
+                Topology::Mesh,
+                10_000_000.0,
             )
         ),
         13 => examples::gps_only(
             &Config::new(
                 "Stateful Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Star
+                Topology::Star,
+                0.0,
             )
         ),
         14 => examples::gps_and_control(
             &Config::new(
                 "Stateful Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Star
+                Topology::Star,
+                0.0,
             )
         ),
-        15 => examples::signal_color(
+        15 => examples::command_delay(
             &Config::new(
                 "Stateful Model (Star)",
-                false,
+                plot_resolution,
+                simulation_time,
+                true,
                 NetworkModelType::Stateful,
-                Topology::Star
+                Topology::Star,
+                1_000_000.0,
             )
         ),
-        16 => examples::infection(
+        16 => examples::signal_color(
             &Config::new(
                 "Stateful Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Star
+                Topology::Star,
+                0.0,
             )
         ),
-        17 => examples::dos(
+        17 => examples::infection(
             &Config::new(
                 "Stateful Model (Star)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Star
+                Topology::Star,
+                1_000_000.0,
             )
         ),
-        18 => examples::gps_only(
+        18 => examples::dos(
+            &Config::new(
+                "Stateful Model (Star)",
+                plot_resolution,
+                simulation_time,
+                false,
+                NetworkModelType::Stateful,
+                Topology::Star,
+                10_000_000.0,
+            )
+        ),
+        19 => examples::gps_only(
             &Config::new(
                 "Stateful Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Mesh
+                Topology::Mesh,
+                0.0,
             )
         ),
-        19 => examples::gps_and_control(
+        20 => examples::gps_and_control(
             &Config::new(
                 "Stateful Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Mesh
+                Topology::Mesh,
+                0.0,
             )
         ),
-        20 => examples::signal_color(
+        21 => examples::command_delay(
             &Config::new(
                 "Stateful Model (Mesh)",
-                false,
+                plot_resolution,
+                simulation_time,
+                true,
                 NetworkModelType::Stateful,
-                Topology::Mesh
+                Topology::Mesh,
+                1_000_000.0,
             )
         ),
-        21 => examples::infection(
+        22 => examples::signal_color(
             &Config::new(
                 "Stateful Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Mesh
+                Topology::Mesh,
+                0.0,
             )
         ),
-        22 => examples::dos(
+        23 => examples::infection(
             &Config::new(
                 "Stateful Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Mesh
+                Topology::Mesh,
+                1_000_000.0,
             )
         ),
-        23 => examples::signal_loss_response(
+        24 => examples::dos(
+            &Config::new(
+                "Stateful Model (Mesh)",
+                plot_resolution,
+                simulation_time,
+                false,
+                NetworkModelType::Stateful,
+                Topology::Mesh,
+                10_000_000.0,
+            )
+        ),
+        25 => examples::signal_loss_response(
             &Config::new(
                 "Stateless Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
-                NetworkModelType::Stateless(0.0),
-                Topology::Mesh
+                NetworkModelType::Stateless,
+                Topology::Mesh,
+                0.0,
             )
         ),
-        24 => examples::signal_loss_response(
+        26 => examples::signal_loss_response(
             &Config::new(
                 "Stateful Model (Mesh)",
+                plot_resolution,
+                simulation_time,
                 false,
                 NetworkModelType::Stateful,
-                Topology::Mesh
+                Topology::Mesh,
+                0.0
             )
         ),
         _ => ()
@@ -420,40 +575,41 @@ pub enum AntennaType {
 
 pub struct Config {
     pub plot_caption: String,
+    pub plot_resolution: (u16, u16),
+    pub simulation_time: Millisecond,
     pub display_delayless_network: bool, 
     pub network_model: NetworkModelType,
     pub topology: Topology,
+    pub delay_multiplier: f32,
 }
 
 impl Config {
     #[must_use]
     pub fn new(
         plot_caption: &str,
+        plot_resolution: (u16, u16),
+        simulation_time: Millisecond,
         display_delayless_network: bool,
         network_model: NetworkModelType,
-        topology: Topology
+        topology: Topology,
+        delay_multiplier: f32
     ) -> Self {
         Self {
             plot_caption: plot_caption.to_string(),
+            plot_resolution,
+            simulation_time,
             display_delayless_network,
             network_model,
-            topology
+            topology,
+            delay_multiplier
         }
     }
 
     #[must_use]
     pub fn antenna(&self) -> AntennaType {
         match self.network_model {
-            NetworkModelType::Stateful     => AntennaType::Color,
-            NetworkModelType::Stateless(_) => AntennaType::Strength,
-        }
-    }
-
-    #[must_use]
-    pub fn delay_multiplier(&self) -> f32 {
-        match self.network_model {
-            NetworkModelType::Stateful                    => 0.0,
-            NetworkModelType::Stateless(delay_multiplier) => delay_multiplier,
+            NetworkModelType::Stateful  => AntennaType::Color,
+            NetworkModelType::Stateless => AntennaType::Strength,
         }
     }
 }

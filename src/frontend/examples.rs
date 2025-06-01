@@ -3,20 +3,20 @@ use std::ops::Range;
 
 use rand::prelude::*;
 
+use crate::backend::connections::Topology;
 use crate::backend::device::{
-    Device, DeviceBuilder, DeviceId, SignalLossResponse, Topology, BROADCAST_ID, 
+    Device, DeviceBuilder, DeviceId, SignalLossResponse, BROADCAST_ID, 
     MAX_DRONE_SPEED 
 };
-use crate::backend::device::networkmodel::{
-    NetworkModelBuilder, NetworkModelType
-}; 
-use crate::backend::device::networkmodel::attack::{AttackType, AttackerDevice};
 use crate::backend::device::systems::{
     MovementSystem, PowerSystem, TRXModule, TRXSystem
 };
 use crate::backend::malware::{Malware, MalwareType};
 use crate::backend::mathphysics::{Megahertz, Meter, Point3D, PowerUnit};
 use crate::backend::message::{Task, Message, MessageType};
+use crate::backend::networkmodel::{NetworkModelBuilder, NetworkModelType}; 
+use crate::backend::networkmodel::attack::{AttackType, AttackerDevice};
+use crate::backend::networkmodel::gps::GPS;
 use crate::backend::signal::{
     SignalArea, SignalLevel, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
     RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
@@ -32,12 +32,17 @@ use super::simulation::renderer::{
 const BIG_SIGNAL_STRENGTH_VALUE: f32 = 100_000.0;
 
 const DEVICE_MAX_POWER: PowerUnit = 10_000;
+const GPS_TX_RADIUS: Meter        = 1_000.0;
+
+const DEFAULT_GPS_POSITION_IN_METERS: Point3D = Point3D { 
+    x: 0.0, 
+    y: 0.0, 
+    z: 200.0
+};
 
 const NETWORK_ORIGIN: Point3D          = Point3D { x: 150.3, y: 90.6, z: 25.5 };
 const DRONE_DESTINATION: Point3D       = Point3D { x: 0.0, y: 0.0, z: 0.0 };
 const COMMAND_CENTER_POSITION: Point3D = Point3D { x: 200.0, y: 100.0, z: 0.0 };
-
-const PLOT_RESOLUTION: (u16, u16) = (400, 300);
 
 const VULNERABILITY_PROBABILITY: f64 = 1.0;
 
@@ -87,7 +92,7 @@ fn drone_trx_system(
 
     match antenna {
         AntennaType::Color    => {
-            let max_signal_levels =HashMap::from([
+            let max_signal_levels = HashMap::from([
                 (WIFI_2_4GHZ_FREQUENCY, max_tx_control_signal_level),
                 (GPS_L1_FREQUENCY, max_gps_rx_signal_level)
             ]); 
@@ -153,6 +158,42 @@ fn ewd_trx_system(
     }
 }
 
+fn gps_tx_module() -> TRXModule {
+    let frequency = GPS_L1_FREQUENCY;
+    
+    let max_tx_signal_levels = HashMap::from([
+        (frequency, SignalLevel::from(BIG_SIGNAL_STRENGTH_VALUE))
+    ]);
+    let tx_signal_levels = HashMap::from([(
+        frequency, 
+        SignalLevel::from_area(
+            SignalArea::build(GPS_TX_RADIUS).unwrap(), 
+            frequency
+        )
+    )]);
+
+    TRXModule::build(
+        max_tx_signal_levels,
+        tx_signal_levels,
+    ).unwrap()
+}
+
+fn default_gps() -> GPS {
+    let trx_system = TRXSystem::Strength { 
+        tx_module: gps_tx_module(),
+        rx_module: TRXModule::default()
+    };
+
+    let device = DeviceBuilder::new()
+        .set_real_position(DEFAULT_GPS_POSITION_IN_METERS)
+        .set_signal_loss_response(SignalLossResponse::Ignore)
+        .set_power_system(device_power_system())
+        .set_trx_system(trx_system)
+        .build();
+
+    GPS::new(device, GPS_L1_FREQUENCY)
+}
+
 fn device_power_system() -> PowerSystem {
     PowerSystem::build(DEVICE_MAX_POWER, DEVICE_MAX_POWER)
         .unwrap_or_else(|error| panic!("{}", error))
@@ -213,8 +254,8 @@ fn default_movement_scenario(
 
 fn derive_filename(config: &Config, text: &str) -> String {
     let network_model_part = match config.network_model {
-        NetworkModelType::Stateful     => "sf",
-        NetworkModelType::Stateless(_) => "sl",
+        NetworkModelType::Stateful  => "sf",
+        NetworkModelType::Stateless => "sl",
     };
     let topology_part = match config.topology {
         Topology::Mesh => "mesh",
@@ -258,7 +299,7 @@ fn create_device_vec(
                 .set_power_system(power_system.clone())
                 .set_movement_system(movement_system.clone())
                 .set_trx_system(trx_system.clone())
-                .set_signal_loss_response(SignalLossResponse::Ignore);
+                .set_signal_loss_response(SignalLossResponse::Shutdown);
 
             let drone_builder = if rand::random_bool(
                 VULNERABILITY_PROBABILITY
@@ -378,18 +419,18 @@ pub fn gps_only(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
-
-    let end_time        = 15_000;
 
     let output_filename = derive_filename(config, "gps_only");
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        PLOT_RESOLUTION,
+        config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
         0.15,
@@ -397,7 +438,7 @@ pub fn gps_only(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network],
         renderer
     );
@@ -477,18 +518,18 @@ pub fn gps_and_control(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
  
-    let end_time        = 10_000;
-
     let output_filename = derive_filename(config, "gps_and_control"); 
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        PLOT_RESOLUTION,
+        config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
         0.15,
@@ -496,7 +537,7 @@ pub fn gps_and_control(config: &Config) {
     );
     
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network],
         renderer
     );
@@ -506,7 +547,7 @@ pub fn gps_and_control(config: &Config) {
 
 pub fn command_delay(config: &Config) {
     let antenna = config.antenna();
-    let cc_tx_control_area_radius    = 500.0;
+    let cc_tx_control_area_radius    = 1000.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
 
@@ -538,10 +579,11 @@ pub fn command_delay(config: &Config) {
 
     if config.display_delayless_network {
         let delayless_drone_network = NetworkModelBuilder::new(
-                NetworkModelType::Stateless(0.0)
+                config.network_model
             )
             .set_command_center_id(command_center_id)
             .set_devices(&devices)
+            .set_gps(default_gps())
             .set_topology(config.topology)
             .set_scenario(scenario.clone())
             .build();
@@ -551,23 +593,27 @@ pub fn command_delay(config: &Config) {
     let drone_network = NetworkModelBuilder::new(config.network_model)
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
     
     drone_networks.insert(0, drone_network);
 
-    let end_time        = 10_000;
-
     let output_filename = derive_filename(config, "command_delay");
-    let drone_colorings = vec![
-        DeviceColoring::SingleColor(0, 0, 0),
-        DeviceColoring::SingleColor(255, 0, 0)
-    ];
+    let drone_colorings = if config.display_delayless_network {
+        vec![
+            DeviceColoring::SingleColor(0, 0, 0),
+            DeviceColoring::SingleColor(255, 0, 0)
+        ]
+    } else {
+        vec![DeviceColoring::SingleColor(0, 0, 0)]
+    };
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        PLOT_RESOLUTION,
+        config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
         0.15,
@@ -575,7 +621,7 @@ pub fn command_delay(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         drone_networks,
         renderer
     );
@@ -619,20 +665,19 @@ pub fn signal_color(config: &Config) {
     let drone_network = NetworkModelBuilder::new(config.network_model)
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
 
-    let end_time        = 50;
-    
     let output_filename = derive_filename(config, "signal_color");
-    let plot_resolution = (400, 300);
     let drone_colorings = vec![DeviceColoring::Signal];
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        plot_resolution,
+        config.plot_resolution,
         axes_ranges,
         &drone_colorings,
         1.57,
@@ -640,7 +685,7 @@ pub fn signal_color(config: &Config) {
     );
     
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network],
         renderer
     );
@@ -684,18 +729,18 @@ pub fn signal_color_dynamic(config: &Config) {
     let drone_network = NetworkModelBuilder::new(config.network_model)
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
-
-    let end_time        = 15_000;
 
     let output_filename = derive_filename(config, "signal_color_dynamic");
     let drone_colorings = vec![DeviceColoring::Signal];
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        PLOT_RESOLUTION,
+        config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
         0.15,
@@ -703,7 +748,7 @@ pub fn signal_color_dynamic(config: &Config) {
     );
     
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network],
         renderer
     );
@@ -718,8 +763,8 @@ pub fn infection(config: &Config) {
         AntennaType::Strength => 300.0
     };
     let drone_tx_control_area_radius = match config.network_model {
-        NetworkModelType::Stateful     => 12.5,
-        NetworkModelType::Stateless(_) => 30.0,
+        NetworkModelType::Stateful  => 20.0,
+        NetworkModelType::Stateless => 30.0,
     };
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
     let indicator_malware = indicator_malware();
@@ -760,20 +805,19 @@ pub fn infection(config: &Config) {
     let drone_network = NetworkModelBuilder::new(config.network_model)
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
 
-    let end_time        = 10_000;
-    
     let output_filename = derive_filename(config, "infection");
-    let plot_resolution = (400, 300);
     let drone_colorings = vec![DeviceColoring::Infection]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        plot_resolution,
+        config.plot_resolution,
         axes_ranges,
         &drone_colorings,
         1.57,
@@ -781,7 +825,7 @@ pub fn infection(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network],
         renderer
     );
@@ -797,7 +841,7 @@ pub fn jamming_infection(config: &Config) {
     };
     let drone_tx_control_area_radius = match config.network_model {
         NetworkModelType::Stateful     => 12.5,
-        NetworkModelType::Stateless(_) => 30.0,
+        NetworkModelType::Stateless => 30.0,
     };
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
     let indicator_malware = indicator_malware();
@@ -849,26 +893,27 @@ pub fn jamming_infection(config: &Config) {
     let drone_network_indicator = NetworkModelBuilder::new(config.network_model)
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(indicator_scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
     let drone_network_jamming = NetworkModelBuilder::new(config.network_model)
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(jamming_scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
 
-    let end_time        = 15_000;
-    
     let output_filename = derive_filename(config, "infection_indicator");
-    let plot_resolution = (400, 300);
     let drone_colorings = vec![DeviceColoring::Infection]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let indicator_renderer = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        plot_resolution,
+        config.plot_resolution,
         axes_ranges.clone(),
         &drone_colorings,
         1.57,
@@ -880,7 +925,7 @@ pub fn jamming_infection(config: &Config) {
     let jamming_renderer = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        plot_resolution,
+        config.plot_resolution,
         axes_ranges,
         &drone_colorings,
         1.57,
@@ -888,12 +933,12 @@ pub fn jamming_infection(config: &Config) {
     );
 
     let mut indicator_simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network_indicator],
         indicator_renderer
     );
     let mut jamming_simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network_jamming],
         jamming_renderer
     );
@@ -964,11 +1009,11 @@ pub fn gps_spoofing(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
-
-    let end_time        = 15_000;
 
     let output_filename = derive_filename(config, "gps_spoofing");
     let axes_ranges     = Axes3DRanges::new(0.0..200.0, 0.0..0.0, 0.0..200.0);
@@ -976,7 +1021,7 @@ pub fn gps_spoofing(config: &Config) {
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        PLOT_RESOLUTION,
+        config.plot_resolution,
         axes_ranges,
         &drone_colorings,
         1.57,
@@ -984,7 +1029,7 @@ pub fn gps_spoofing(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network],
         renderer
     );
@@ -995,12 +1040,12 @@ pub fn gps_spoofing(config: &Config) {
 pub fn dos(config: &Config) {
     let antenna = config.antenna();
     let cc_tx_control_area_radius    = match antenna {
-        AntennaType::Color    => 200.0,
+        AntennaType::Color    => 100.0,
         AntennaType::Strength => 300.0
     };
     let drone_tx_control_area_radius = match config.network_model {
-        NetworkModelType::Stateful     => 12.5,
-        NetworkModelType::Stateless(_) => 30.0,
+        NetworkModelType::Stateful  => 20.0,
+        NetworkModelType::Stateless => 30.0,
     };
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
     let dos_area_radius = 50.0;
@@ -1055,19 +1100,18 @@ pub fn dos(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
 
-    let end_time        = 5_000;
-    
     let output_filename = derive_filename(config, "dos");
-    let plot_resolution = (400, 300);
-    let drone_colorings = vec![DeviceColoring::Infection]; 
+    let drone_colorings = vec![DeviceColoring::Signal]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        plot_resolution,
+        config.plot_resolution,
         axes_ranges,
         &drone_colorings,
         1.57,
@@ -1075,7 +1119,7 @@ pub fn dos(config: &Config) {
     );
 
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network],
         renderer
     );
@@ -1166,18 +1210,18 @@ pub fn signal_loss_response(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
+        .set_gps(default_gps())
         .set_topology(config.topology)
         .set_scenario(scenario)
+        .set_delay_multiplier(config.delay_multiplier)
         .build();
  
-    let end_time = 15_000;
-
     let output_filename = derive_filename(config, "signal_loss_response"); 
     let drone_colorings = vec![DeviceColoring::Signal]; 
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
-        (800, 800),
+        config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
         0.15,
@@ -1185,7 +1229,7 @@ pub fn signal_loss_response(config: &Config) {
     );
     
     let mut simulation = Simulation::new(
-        end_time,
+        config.simulation_time,
         vec![drone_network],
         renderer
     );

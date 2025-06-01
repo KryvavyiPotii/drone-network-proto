@@ -1,13 +1,13 @@
 use std::slice::{Iter, IterMut};
 
-use crate::backend::device::connections::DelaySnapshot;
+use crate::backend::device::IdToDelayMap;
 use crate::backend::mathphysics::Megahertz;
 
 use super::Message;
 
 
 #[derive(Clone, Debug, Default)]
-pub struct MessageQueue(Vec<(Megahertz, Message, DelaySnapshot)>);
+pub struct MessageQueue(Vec<(Megahertz, Message, IdToDelayMap)>);
 
 impl MessageQueue {
     #[must_use]
@@ -27,18 +27,22 @@ impl MessageQueue {
     
     pub fn iter(
         &self
-    ) -> Iter<'_, (Megahertz, Message, DelaySnapshot)> {
+    ) -> Iter<'_, (Megahertz, Message, IdToDelayMap)> {
         self.0.iter()
     }
     
     pub fn iter_mut(
         &mut self
-    ) -> IterMut<'_, (Megahertz, Message, DelaySnapshot)> {
+    ) -> IterMut<'_, (Megahertz, Message, IdToDelayMap)> {
         self.0.iter_mut()
     }
    
-    pub fn add_message(&mut self, frequency: Megahertz, message: Message) {
-        self.0.push((frequency, message, DelaySnapshot::default()));
+    pub fn add_message(
+        &mut self, 
+        message: Message,
+        frequency: Megahertz, 
+    ) {
+        self.0.push((frequency, message, IdToDelayMap::default()));
         self.0.sort_by_key(|(_, message, _)| message.time());
     }
 
@@ -48,8 +52,8 @@ impl MessageQueue {
 }
 
 impl<'a> IntoIterator for &'a MessageQueue{
-    type Item = &'a (Megahertz, Message, DelaySnapshot);
-    type IntoIter = Iter<'a, (Megahertz, Message, DelaySnapshot)>;
+    type Item = &'a (Megahertz, Message, IdToDelayMap);
+    type IntoIter = Iter<'a, (Megahertz, Message, IdToDelayMap)>;
     
     fn into_iter(self) -> Self::IntoIter {
          self.iter()
@@ -57,8 +61,8 @@ impl<'a> IntoIterator for &'a MessageQueue{
 }
 
 impl<'a> IntoIterator for &'a mut MessageQueue{
-    type Item = &'a mut (Megahertz, Message, DelaySnapshot);
-    type IntoIter = IterMut<'a, (Megahertz, Message, DelaySnapshot)>;
+    type Item = &'a mut (Megahertz, Message, IdToDelayMap);
+    type IntoIter = IterMut<'a, (Megahertz, Message, IdToDelayMap)>;
     
     fn into_iter(self) -> Self::IntoIter {
          self.iter_mut()
@@ -67,10 +71,10 @@ impl<'a> IntoIterator for &'a mut MessageQueue{
 
 impl From<&[(Megahertz, Message)]> for MessageQueue {
     fn from(messages: &[(Megahertz, Message)]) -> Self {
-        let messages: Vec<(Megahertz, Message, DelaySnapshot)> = messages
+        let messages: Vec<(Megahertz, Message, IdToDelayMap)> = messages
             .iter()
             .map(|(frequency, message)| 
-                (*frequency, *message, DelaySnapshot::default())
+                (*frequency, *message, IdToDelayMap::default())
             )
             .collect();
 
@@ -84,10 +88,10 @@ impl From<&[(Megahertz, Message)]> for MessageQueue {
 
 impl<const N: usize> From<[(Megahertz, Message); N]> for MessageQueue {
     fn from(messages: [(Megahertz, Message); N]) -> Self {
-        let messages: Vec<(Megahertz, Message, DelaySnapshot)> = messages
+        let messages: Vec<(Megahertz, Message, IdToDelayMap)> = messages
             .iter()
             .map(|(frequency, message)| 
-                (*frequency, *message, DelaySnapshot::default())
+                (*frequency, *message, IdToDelayMap::default())
             )
             .collect();
 
@@ -186,7 +190,7 @@ mod tests {
         
         let messages = message_vec();
         for (frequency, message) in &messages {
-            message_queue.add_message(*frequency, *message);
+            message_queue.add_message(*message, *frequency);
         }
 
         let mut queue_iter = message_queue.into_iter();

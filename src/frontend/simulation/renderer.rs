@@ -6,14 +6,15 @@ use plotters::prelude::*;
 use plotters::style::RGBColor;
 use thiserror::Error;
 
+use crate::backend::{DESTINATION_RADIUS, ITERATION_TIME};
+use crate::backend::device::Device;
+use crate::backend::mathphysics::{Megahertz, Meter, Point3D, Position};
+use crate::backend::message::Task;
+use crate::backend::networkmodel::NetworkModel;
+use crate::backend::networkmodel::attack::{AttackerDevice, AttackType};
 use crate::backend::signal::{
     SignalLevel, GPS_L1_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
 };
-use crate::backend::device::{Device, DESTINATION_RADIUS, STEP_DURATION};
-use crate::backend::device::networkmodel::NetworkModel;
-use crate::backend::device::networkmodel::attack::{AttackerDevice, AttackType};
-use crate::backend::mathphysics::{Megahertz, Meter, Point3D, Position};
-use crate::backend::message::Task;
 
 
 const COMMAND_CENTER_RADIUS: Meter = 5.0;
@@ -46,17 +47,15 @@ fn network_models_destinations(
             .copied()
             .collect();
 
-        task_vec
-            .iter()
-            .for_each(|task|
-                match task {
-                    Task::Attack(destination) 
-                        | Task::Reconnect(destination)
-                        | Task::Reposition(destination) => 
-                        destinations.push(*destination),
-                    Task::Undefined => (),
-                }
-            );
+        for task in task_vec {
+            match task {
+                Task::Attack(destination) 
+                    | Task::Reconnect(destination)
+                    | Task::Reposition(destination) => 
+                    destinations.push(destination),
+                Task::Undefined => (),
+            }
+        }
     }
 
     destinations
@@ -276,7 +275,9 @@ impl<'a> PlottersRenderer<'a> {
         let area = BitMapBackend::gif(
             &output_filename, 
             plotters_screen_resolution,
-            STEP_DURATION.try_into().expect("Failed to convert i32 to u32")
+            ITERATION_TIME
+                .try_into()
+                .expect("Failed to convert i32 to u32")
         )
             .expect("Failed to create `BitMapBackend`")
             .into_drawing_area();
@@ -430,7 +431,7 @@ impl<'a> PlottersRenderer<'a> {
         {
             let device_primitives = network_model
                 .device_iter()
-                .map(|device| 
+                .map(|device|
                     device_primitive(
                         device, 
                         *coloring, 

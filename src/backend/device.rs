@@ -1,11 +1,11 @@
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use thiserror::Error;
 
+use super::{DESTINATION_RADIUS, ITERATION_TIME};
 use super::mathphysics::{
     equation_of_motion_3d, millis_to_secs, Megahertz, Meter, MeterPerSecond, 
-    Millisecond, Point3D, Position, PowerUnit,
+    Point3D, Position, PowerUnit,
 };
 use super::message::{Task, Message, MessageType};
 use super::malware::{
@@ -22,31 +22,26 @@ use systems::{
 };
 
 
-pub use connections::*;
-pub use idmaps::{IdToDeviceMap, IdToTaskMap, IdToLevelMap};
+pub use idmaps::*;
 
 
-pub mod connections;
 pub mod idmaps;
 pub mod systems;
-pub mod networkmodel;
 
 
 pub type DeviceId = usize;
 
 
-pub const STEP_DURATION: Millisecond = 50;
-
-pub const BROADCAST_ID: DeviceId = 0;
+pub const BROADCAST_ID: DeviceId = DeviceId::MAX;
 pub const UNKNOWN_ID: DeviceId   = 0;
 
-pub const DESTINATION_RADIUS: Meter        = 5.0;
-pub const MAX_DRONE_SPEED: MeterPerSecond  = 25.0;
+pub const MAX_DRONE_SPEED: MeterPerSecond = 25.0;
 
 
 const MOVEMENT_POWER_CONSUMPTION: PowerUnit   = 5; 
 const PASSIVE_POWER_CONSUMPTION: PowerUnit    = 1; 
 const PROCESSING_POWER_CONSUMPTION: PowerUnit = 5; 
+
 
 static FREE_DEVICE_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -67,7 +62,7 @@ pub enum DeviceError {
 }
 
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum SignalLossResponse {
     Ascend,
     #[default]
@@ -189,9 +184,6 @@ pub struct Device {
     trx_system: TRXSystem,
     // TODO HashMap<MalwareId, InfectionState>
     infection_states: MalwareToStateMap,
-    // A device that is a command center should always have RX-module which
-    // receives control signal. Otherwise, it will constantly execute signal
-    // loss response.
     signal_loss_response: SignalLossResponse,
 }
 
@@ -237,6 +229,11 @@ impl Device {
     #[must_use]
     pub fn gps_position(&self) -> &Point3D {
         self.movement_system.position()
+    }
+    
+    #[must_use]
+    pub fn signal_loss_response(&self) -> &SignalLossResponse {
+        &self.signal_loss_response
     }
 
     #[must_use]
@@ -496,7 +493,7 @@ impl Device {
             Task::Attack(destination) 
                 | Task::Reconnect(destination)
                 | Task::Reposition(destination)
-                if gps_is_connected  => {
+            if gps_is_connected  => {
                 self.movement_system.set_direction(destination);
                 self.try_reach_task();
             },
@@ -553,7 +550,7 @@ impl Device {
         self.real_position_in_meters = equation_of_motion_3d(
             &self.real_position_in_meters,
             &self.movement_system.velocity().displacement(),
-            millis_to_secs(STEP_DURATION),
+            millis_to_secs(ITERATION_TIME),
         );
         
         Ok(())
@@ -616,18 +613,18 @@ impl Device {
     }
 }
 
-
-impl Eq for Device {}
-
-impl PartialEq for Device {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Hash for Device {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+impl Default for Device {
+    fn default() -> Self {
+        Self {
+            id: generate_device_id(),
+            real_position_in_meters: Point3D::default(),
+            task: Task::default(),
+            power_system: PowerSystem::default(),
+            movement_system: MovementSystem::default(),
+            trx_system: TRXSystem::default(),
+            infection_states: MalwareToStateMap::default(),
+            signal_loss_response: SignalLossResponse::default(),
+        }
     }
 }
 
@@ -972,7 +969,7 @@ mod tests {
             .set_signal_loss_response(signal_loss_response)
             .build();
 
-        for _ in (0..500).step_by(STEP_DURATION as usize) {
+        for _ in (0..500).step_by(ITERATION_TIME as usize) {
             let gps_message = Message::new(
                 UNKNOWN_ID, 
                 device_without_signal.id(), 
@@ -1107,7 +1104,7 @@ mod tests {
             device_position
         );
 
-        for _ in (0..1000).step_by(STEP_DURATION as usize) {
+        for _ in (0..1000).step_by(ITERATION_TIME as usize) {
             let _ = device.update_state();
 
             assert_eq!(
@@ -1132,7 +1129,7 @@ mod tests {
             .set_movement_system(drone_movement_system())
             .build();
 
-        for _ in (0..1000).step_by(STEP_DURATION as usize) {
+        for _ in (0..1000).step_by(ITERATION_TIME as usize) {
             let _ = device_without_gps.update_state();
         }
 
@@ -1174,7 +1171,7 @@ mod tests {
             .set_trx_system(trx_system)
             .build();
             
-        for _ in (0..1000).step_by(STEP_DURATION as usize) {
+        for _ in (0..1000).step_by(ITERATION_TIME as usize) {
             let gps_message = Message::new(
                 UNKNOWN_ID, 
                 device.id(), 

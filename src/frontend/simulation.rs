@@ -2,8 +2,8 @@ use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use log::{info, trace};
 
-use crate::backend::device::STEP_DURATION;
-use crate::backend::device::networkmodel::NetworkModel;
+use crate::backend::ITERATION_TIME;
+use crate::backend::networkmodel::NetworkModel;
 use crate::backend::mathphysics::Millisecond;
 
 use renderer::PlottersRenderer;
@@ -74,7 +74,7 @@ impl<'a> Simulation<'a> {
         let end = self.end_time;
 
         info!("Output filename: {}", self.renderer.output_filename());
-        for _ in (0..end).step_by(STEP_DURATION as usize) {
+        for _ in (0..end).step_by(ITERATION_TIME as usize) {
             if !running.load(std::sync::atomic::Ordering::SeqCst) { 
                 info!(
                     "TERM, Simulation, Time: {}, {}", 
@@ -97,7 +97,7 @@ impl<'a> Simulation<'a> {
                 self.current_time,
                 log_device_count(&self.network_models)
             );
-            self.current_time += STEP_DURATION;
+            self.current_time += ITERATION_TIME;
         }
 
         info!("Simulation finished at {} millis", self.current_time);
