@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::backend::mathphysics::Megahertz;
+use crate::backend::mathphysics::{Megahertz, Meter};
 use crate::backend::signal::{
     FreqToLevelMap, NO_SIGNAL_LEVEL, SignalLevel, min_signal_level
 };
@@ -98,6 +98,76 @@ impl TRXModule {
         );
 
         self.signal_levels.insert(frequency, new_signal_level);
+    }
+
+    #[must_use]
+    pub fn signal_level_at_by_color(
+        &self,
+        distance: Meter,
+        frequency: Megahertz,
+    ) -> SignalLevel {
+        self
+            .signal_level(frequency)
+            .at_by_zone(frequency, distance)
+    }
+    
+    #[must_use]
+    pub fn signal_level_at_by_strength(
+        &self,
+        distance: Meter,
+        frequency: Megahertz,
+    ) -> SignalLevel {
+        self
+            .signal_level(frequency)
+            .at(frequency, distance)
+    }
+
+    pub fn receive_signal_by_color(
+        &mut self,
+        tx_signal_level: SignalLevel,
+        frequency: Megahertz,
+    ) {
+        let current_signal_level  = *self.signal_level(frequency);
+        let received_signal_level = current_signal_level
+            .receive_by_color(tx_signal_level);
+
+        self.set_signal_level(received_signal_level, frequency);
+    }
+
+    pub fn receive_signal_by_strength(
+        &mut self,
+        tx_signal_level: SignalLevel,
+        frequency: Megahertz,
+    ) {
+        let max_signal_level      = *self.max_signal_level(frequency);
+        let received_signal_level = max_signal_level
+            .receive_by_strength(tx_signal_level);
+
+        self.set_signal_level(received_signal_level, frequency);
+    }
+    
+    pub fn suppress_signal_by_color(
+        &mut self,
+        suppressor_signal_level: SignalLevel,
+        frequency: Megahertz,
+    ) {
+        let current_signal_level    = *self.signal_level(frequency);
+        let suppressed_signal_level = suppressor_signal_level
+            .suppress_by_color(current_signal_level);
+
+        self.set_signal_level(suppressed_signal_level, frequency);
+    }
+
+    pub fn suppress_signal_by_strength(
+        &mut self,
+        suppressor_signal_level: SignalLevel,
+        frequency: Megahertz,
+    ) {
+        let current_signal_level    = *self.signal_level(frequency);
+        let suppressed_signal_level = suppressor_signal_level
+            .suppress_by_strength(current_signal_level);
+        
+        self.set_signal_level(suppressed_signal_level, frequency);
     }
 }
 

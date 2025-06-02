@@ -404,7 +404,7 @@ impl Device {
             return Err(TRXSystemError::WrongMessageDestination);
         }
 
-        self.trx_system.receive_message(frequency, message) 
+        self.trx_system.receive_message(message, frequency) 
     }
     
     pub fn signal_level_suppression(

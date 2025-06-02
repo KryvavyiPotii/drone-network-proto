@@ -6,7 +6,10 @@ use crate::backend::signal::{
     BLACK_SIGNAL_LEVEL, FreqToLevelMap, SignalArea, SignalLevel
 };
 
-use super::TRXModule;
+pub use modules::TRXModule;
+
+
+pub mod modules;
 
 
 #[derive(Error, Debug)]
@@ -178,7 +181,9 @@ impl TRXSystem {
             return false;
         }
 
-        !self.tx_signal_level_at(frequency, distance).is_black()
+        !self
+            .tx_signal_level_at(frequency, distance)
+            .is_black()
     }
     
     #[must_use]
@@ -188,12 +193,10 @@ impl TRXSystem {
         distance: Meter
     ) -> SignalLevel {
         match self {
-            Self::Color(trx_module)          => trx_module
-                .signal_level(frequency)
-                .at_by_zone(frequency, distance),
-            Self::Strength { tx_module, .. } => tx_module
-                .signal_level(frequency)
-                .at(frequency, distance)
+            Self::Color(trx_module)          => 
+                trx_module.signal_level_at_by_color(distance, frequency),
+            Self::Strength { tx_module, .. } => 
+                tx_module.signal_level_at_by_strength(distance, frequency),
         }
     }
 
@@ -204,33 +207,20 @@ impl TRXSystem {
     ) {
         match self {
             Self::Color(trx_module)                 => { 
-                let current_signal_level = *trx_module.signal_level(frequency);
-                let suppressed_signal_level = suppressor_signal_level
-                    .suppress_by_color(current_signal_level);
-
-                trx_module.set_signal_level(suppressed_signal_level, frequency);
+                trx_module.suppress_signal_by_color(
+                    suppressor_signal_level,
+                    frequency
+                );
             },
             Self::Strength { tx_module, rx_module } => {
-                let current_tx_signal_level = *tx_module.signal_level(
+                tx_module.suppress_signal_by_strength(
+                    suppressor_signal_level, 
                     frequency
-                );
-                let suppressed_tx_signal_level = suppressor_signal_level
-                    .suppress_by_strength(current_tx_signal_level);
-                
-                let current_rx_signal_level = *rx_module.signal_level(
+                ); 
+                rx_module.suppress_signal_by_strength(
+                    suppressor_signal_level, 
                     frequency
-                );
-                let suppressed_rx_signal_level = suppressor_signal_level
-                    .suppress_by_strength(current_rx_signal_level);
-                
-                tx_module.set_signal_level(
-                    suppressed_tx_signal_level,
-                    frequency, 
-                );
-                rx_module.set_signal_level(
-                    suppressed_rx_signal_level,
-                    frequency, 
-                );
+                ); 
             }
         }
     }
@@ -254,22 +244,16 @@ impl TRXSystem {
         frequency: Megahertz,
     ) {
         match self {
-            Self::Color(trx_module)          => {
-                let current_signal_level = *trx_module
-                    .signal_level(frequency);
-                let received_signal_level = current_signal_level
-                    .receive_by_color(tx_signal_level);
-
-                trx_module.set_signal_level(received_signal_level, frequency);
-            },
-            Self::Strength { rx_module, .. } => {
-                let max_signal_level = *rx_module
-                    .max_signal_level(frequency);
-                let received_signal_level = max_signal_level
-                    .receive_by_strength(tx_signal_level);
-
-                rx_module.set_signal_level(received_signal_level, frequency);
-            },
+            Self::Color(trx_module)          =>
+                trx_module.receive_signal_by_color(
+                    tx_signal_level, 
+                    frequency
+                ),
+            Self::Strength { rx_module, .. } =>
+                rx_module.receive_signal_by_strength(
+                    tx_signal_level, 
+                    frequency
+                ),
         }
     }
 
@@ -278,8 +262,8 @@ impl TRXSystem {
     /// Will return `Err` if message execution cost exceeds RX signal level. 
     pub fn receive_message(
         &mut self,
+        message: &Message,
         frequency: Megahertz,
-        message: &Message
     ) -> Result<(), TRXSystemError> {
         let rx_module = match self {
             Self::Color(trx_module)          => trx_module,
@@ -287,11 +271,13 @@ impl TRXSystem {
         };
     
         let current_signal_level = rx_module.signal_level(frequency);
+        
         if current_signal_level < message.cost() {
             return Err(TRXSystemError::TooExpensiveMessage);
         }
         
         let new_signal_level = current_signal_level - message.cost();
+        
         rx_module.set_signal_level(new_signal_level, frequency);
 
         Ok(())
@@ -378,16 +364,21 @@ mod tests {
         let rx_signal_levels = HashMap::from([
             (GPS_L1_FREQUENCY, SignalLevel::from(-10.0))
         ]);
+        let negative_rx_module = TRXModule::build(
+            max_rx_signal_levels,
+            rx_signal_levels
+        ).unwrap();
 
-        let negative_rx_system = TRXSystem::Strength {
+        let negative_color_rx_system = TRXSystem::Color(
+            negative_rx_module.clone()
+        );
+        let negative_strength_rx_system = TRXSystem::Strength {
             tx_module: TRXModule::default(),
-            rx_module: TRXModule::build(
-                    max_rx_signal_levels,
-                    rx_signal_levels
-                ).unwrap()
+            rx_module: negative_rx_module
         };
 
-        assert!(!negative_rx_system.receives_signal(GPS_L1_FREQUENCY));
+        assert!(!negative_color_rx_system.receives_signal(GPS_L1_FREQUENCY));
+        assert!(!negative_strength_rx_system.receives_signal(GPS_L1_FREQUENCY));
     }
 
     #[test]
@@ -398,16 +389,19 @@ mod tests {
         let rx_signal_levels = HashMap::from([
             (GPS_L1_FREQUENCY, YELLOW_SIGNAL_LEVEL)
         ]);
+        let rx_module = TRXModule::build(
+            max_rx_signal_levels,
+            rx_signal_levels
+        ).unwrap();
 
-        let rx_system = TRXSystem::Strength {
+        let color_rx_system = TRXSystem::Color(rx_module.clone());
+        let strength_rx_system = TRXSystem::Strength {
             tx_module: TRXModule::default(),
-            rx_module: TRXModule::build(
-                    max_rx_signal_levels,
-                    rx_signal_levels
-                ).unwrap()
+            rx_module,
         };
 
-        assert!(rx_system.receives_signal(GPS_L1_FREQUENCY));
+        assert!(color_rx_system.receives_signal(GPS_L1_FREQUENCY));
+        assert!(strength_rx_system.receives_signal(GPS_L1_FREQUENCY));
     }
 
     #[test]
@@ -433,7 +427,7 @@ mod tests {
 
         assert!(
             strength_rx_system
-                .receive_message(frequency, &message)
+                .receive_message(&message, frequency)
                 .is_ok()
         );
         assert_eq!(
@@ -465,7 +459,7 @@ mod tests {
 
         assert!(
             color_rx_system
-                .receive_message(frequency, &message)
+                .receive_message(&message, frequency)
                 .is_ok()
         );
         assert!(
@@ -496,7 +490,7 @@ mod tests {
 
         assert!(
             matches!(
-                strength_rx_system.receive_message(frequency, &message),
+                strength_rx_system.receive_message(&message, frequency),
                 Err(TRXSystemError::TooExpensiveMessage)
             )
         );
@@ -505,7 +499,7 @@ mod tests {
         
         assert!(
             matches!(
-                color_rx_system.receive_message(frequency, &message),
+                color_rx_system.receive_message(&message, frequency),
                 Err(TRXSystemError::TooExpensiveMessage)
             )
         );
