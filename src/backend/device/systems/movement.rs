@@ -73,14 +73,14 @@ impl MovementSystem {
         self.velocity_in_mps.truncate(self.max_speed);
     }
     
-    pub fn set_direction(&mut self, destination_in_metres: Point3D) {
+    pub fn set_direction(&mut self, destination_in_meters: Point3D) {
         if self.is_disabled() {
             return;
         }
         
         self.velocity_in_mps = Vector3D::new(
             self.position_in_meters,
-            destination_in_metres
+            destination_in_meters
         );
         
         self.velocity_in_mps.scale_to(self.max_speed);
