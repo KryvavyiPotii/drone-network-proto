@@ -299,7 +299,7 @@ impl Default for TRXSystem {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::backend::device::{BROADCAST_ID, UNKNOWN_ID};
+    use crate::backend::device::{DeviceId, BROADCAST_ID};
     use crate::backend::message::{Task, Message, MessageType};
     use crate::backend::signal::{
         SignalStrength, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL, 
@@ -307,6 +307,9 @@ mod tests {
     };
 
     use super::*;
+
+
+    const UNKNOWN_ID: DeviceId = 0;
 
 
     #[test]

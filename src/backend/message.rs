@@ -216,9 +216,10 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use crate::backend::device::UNKNOWN_ID;
-
     use super::*;
+
+
+    const UNKNOWN_ID: DeviceId = 0;
 
 
     fn message_is_waiting(message: &Message) -> bool {

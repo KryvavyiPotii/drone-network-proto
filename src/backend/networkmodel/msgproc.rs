@@ -200,9 +200,7 @@ pub fn try_preprocess_message(
 mod tests {
     use std::collections::HashMap;
 
-    use crate::backend::device::{
-        Device, DeviceBuilder, BROADCAST_ID, UNKNOWN_ID
-    };
+    use crate::backend::device::{Device, DeviceBuilder, BROADCAST_ID};
     use crate::backend::device::systems::{PowerSystem, TRXModule, TRXSystem};
     use crate::backend::malware::{Malware, MalwareType};
     use crate::backend::mathphysics::{Meter, Point3D, PowerUnit};
@@ -215,9 +213,10 @@ mod tests {
     use super::*;
 
     
-    const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
-    const VERY_BIG_STRENGTH_VALUE: f32   = GREEN_SIGNAL_STRENGTH_VALUE * 1000.0;
     const DEVICE_MAX_POWER: PowerUnit    = 1_000;
+    const DRONE_TX_CONTROL_RADIUS: Meter = 10.0;
+    const UNKNOWN_ID: DeviceId           = 0;
+    const VERY_BIG_STRENGTH_VALUE: f32   = GREEN_SIGNAL_STRENGTH_VALUE * 1000.0;
 
 
     fn device_power_system() -> PowerSystem {

@@ -32,8 +32,7 @@ pub mod systems;
 pub type DeviceId = usize;
 
 
-pub const BROADCAST_ID: DeviceId = DeviceId::MAX;
-pub const UNKNOWN_ID: DeviceId   = 0;
+pub const BROADCAST_ID: DeviceId = 0;
 
 pub const MAX_DRONE_SPEED: MeterPerSecond = 25.0;
 
@@ -877,7 +876,7 @@ mod tests {
         let many_iterations = 10;
         for _ in 0..many_iterations {
             let gps_message = Message::new(
-                UNKNOWN_ID, 
+                0, 
                 device_without_signal.id(), 
                 0,
                 MessageType::GPS(*device_without_signal.position())
@@ -919,7 +918,7 @@ mod tests {
         let many_iterations = 500;
         for _ in 0..many_iterations {
             let gps_message = Message::new(
-                UNKNOWN_ID, 
+                0, 
                 device_without_signal.id(), 
                 0,
                 MessageType::GPS(*device_without_signal.position())
@@ -971,7 +970,7 @@ mod tests {
 
         for _ in (0..500).step_by(ITERATION_TIME as usize) {
             let gps_message = Message::new(
-                UNKNOWN_ID, 
+                0, 
                 device_without_signal.id(), 
                 0,
                 MessageType::GPS(*device_without_signal.position())
@@ -1004,7 +1003,7 @@ mod tests {
         let many_iterations = 500;
         for _ in 0..many_iterations {
             let gps_message = Message::new(
-                UNKNOWN_ID, 
+                0, 
                 device_without_signal.id(), 
                 0,
                 MessageType::GPS(*device_without_signal.position())
@@ -1173,7 +1172,7 @@ mod tests {
             
         for _ in (0..1000).step_by(ITERATION_TIME as usize) {
             let gps_message = Message::new(
-                UNKNOWN_ID, 
+                0, 
                 device.id(), 
                 0,
                 MessageType::GPS(*device.position())
@@ -1228,7 +1227,7 @@ mod tests {
             .build();
             
         let message = Message::new(
-            UNKNOWN_ID,
+            0,
             device.id(),
             0, 
             MessageType::SetTask(task)
@@ -1257,7 +1256,7 @@ mod tests {
         assert_eq!(device.gps_position(), Point3D::default());
 
         let message = Message::new(
-            UNKNOWN_ID,
+            0,
             device.id(),
             0, 
             MessageType::GPS(gps_position)
@@ -1282,7 +1281,7 @@ mod tests {
             .build();    
         
         let message = Message::new(
-            UNKNOWN_ID,
+            0,
             BROADCAST_ID,
             0, 
             MessageType::SetTask(task)
@@ -1333,7 +1332,7 @@ mod tests {
             .build(); 
         
         let message = Message::new(
-            UNKNOWN_ID,
+            0,
             BROADCAST_ID,
             0, 
             MessageType::Malware(malware)
@@ -1374,7 +1373,7 @@ mod tests {
             .build(); 
         
         let message = Message::new(
-            UNKNOWN_ID,
+            0,
             BROADCAST_ID,
             0, 
             MessageType::Malware(malware)
@@ -1426,7 +1425,7 @@ mod tests {
             .build();
         
         let message = Message::new(
-            UNKNOWN_ID,
+            0,
             BROADCAST_ID,
             0, 
             MessageType::Malware(jamming_malware)
