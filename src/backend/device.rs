@@ -559,12 +559,12 @@ impl Device {
     // its current position (if it has GPS connection).
     fn try_reach_task(&mut self) {
         match self.task {
-            Task::Attack(destination) if 
-                self.at_destination(&destination) => 
-                self.selfdestruction(),
-            Task::Reposition(destination) if 
-                self.at_destination(&destination) => 
-                self.task = Task::Undefined,
+            Task::Attack(destination) if self.at_destination(
+                &destination
+            ) => self.selfdestruction(),
+            Task::Reposition(destination) if self.at_destination(
+                &destination
+            ) => self.task = Task::Undefined,
             _ => (),
         }
     }

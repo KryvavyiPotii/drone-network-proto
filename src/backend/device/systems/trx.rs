@@ -24,7 +24,10 @@ pub enum TRXSystemError {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TRXSystem {
     Color(TRXModule),
-    Strength { tx_module: TRXModule, rx_module: TRXModule }
+    Strength { 
+        tx_module: TRXModule, 
+        rx_module: TRXModule,
+    }
 }
 
 impl TRXSystem {
