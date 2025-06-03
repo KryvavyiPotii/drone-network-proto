@@ -318,14 +318,14 @@ impl Device {
 
     // self - transmitter
     #[must_use]
-    pub fn propagated_signal_level_at(
+    pub fn propagated_signal_level_at<P: Position>(
         &self,
-        receiver: &Self,
+        receiver: &P,
         frequency: Megahertz
     ) -> SignalLevel {
         let distance_to_rx = self.distance_to(receiver);
 
-        self.trx_system.tx_signal_level_at(frequency, distance_to_rx)
+        self.trx_system.tx_signal_level_at(distance_to_rx, frequency)
     }
     
     // self - transmitter
@@ -342,14 +342,14 @@ impl Device {
         receiver.receive_signal(propagated_signal_level_at_rx, frequency);
     }
 
-    // self - EWD 
+    // self - electronic warfare 
     pub fn suppress_all_signals(&self, receiver: &mut Self) {
         for frequency in self.tx_signal_levels().keys() {
             self.suppress_signal(receiver, *frequency);    
         }
     }
     
-    // self - EWD 
+    // self - electronic warfare
     pub fn suppress_signal(
         &self,
         receiver: &mut Self,

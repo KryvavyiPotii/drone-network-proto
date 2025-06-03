@@ -182,15 +182,15 @@ impl TRXSystem {
         }
 
         !self
-            .tx_signal_level_at(frequency, distance)
+            .tx_signal_level_at(distance, frequency)
             .is_black()
     }
     
     #[must_use]
     pub fn tx_signal_level_at(
         &self, 
+        distance: Meter,
         frequency: Megahertz,
-        distance: Meter
     ) -> SignalLevel {
         match self {
             Self::Color(trx_module)          => 
