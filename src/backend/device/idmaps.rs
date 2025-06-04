@@ -1,17 +1,14 @@
 use std::collections::HashMap;
 use std::collections::hash_map::{Iter, IterMut, Keys, Values, ValuesMut};
 
-use crate::backend::mathphysics::Megahertz;
+use crate::backend::mathphysics::{Megahertz, Millisecond};
 use crate::backend::message::Task;
 use crate::backend::signal::{SignalLevel, NO_SIGNAL_LEVEL};
 
 use super::{Device, DeviceId};
 
 
-// Used for storing message transmission delays between devices which are
-// connected to the same network. Delays between devices which are connected
-// to different networks are stored in the `Message.execution_time` field. 
-pub type IdToDelayMap = HashMap<DeviceId, i32>;
+pub type IdToDelayMap = HashMap<DeviceId, Millisecond>;
 pub type IdToLevelMap = HashMap<DeviceId, SignalLevel>;
 pub type IdToTaskMap  = HashMap<DeviceId, Task>;
 
@@ -55,6 +52,7 @@ impl IdToDeviceMap {
         self.0.iter()
     }
 
+    #[must_use]
     pub fn iter_mut(&mut self) -> IterMut<'_, DeviceId, Device> {
         self.0.iter_mut()
     }
