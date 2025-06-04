@@ -6,7 +6,6 @@ pub type KilometerPerSecond = f32;
 pub type MeterPerMillisecond = f32;
 pub type MeterPerSecond = f32;
 pub type Megahertz = u32;
-// TODO add proper type in SI
 pub type PowerUnit = u32;
 
 

@@ -4,7 +4,7 @@ use crate::backend::connections::ConnectionGraph;
 use crate::backend::device::{
     Device, DeviceId, IdToDelayMap, IdToDeviceMap, IdToTaskMap, BROADCAST_ID
 };
-use crate::backend::mathphysics::{delay_to, Millisecond, Position};
+use crate::backend::mathphysics::{delay_to, Megahertz, Millisecond, Position};
 use crate::backend::message::{Message, MessageType};
 
 
@@ -32,6 +32,94 @@ pub enum UnicastMessageError {
     TooEarly,
 }
 
+
+pub fn send_message(
+    message: &Message,
+    frequency: Megahertz,
+    device_map: &mut IdToDeviceMap,
+    delay_map: &IdToDelayMap,
+    current_time: Millisecond
+) -> Vec<DeviceId> {
+    let destination_id = message.destination_id();
+
+    if destination_id == BROADCAST_ID {
+        broadcast_message(
+            message,
+            frequency,
+            device_map,
+            delay_map,
+            current_time
+        )
+    } else {
+        let Some(device) = device_map.get_mut(&destination_id) else {
+            return Vec::new();
+        };
+        let delay = delay_map
+            .get(&device.id())
+            .unwrap_or(&0);
+
+        let unicast_result = unicast_message(
+            message, 
+            frequency, 
+            device, 
+            *delay, 
+            current_time
+        );
+
+        if let Ok(device_id) = unicast_result {
+            vec![device_id]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+fn unicast_message(
+    message: &Message,
+    frequency: Megahertz,
+    device: &mut Device,
+    delay: Millisecond,
+    current_time: Millisecond
+) -> Result<DeviceId, UnicastMessageError> {
+    if current_time < message.time() + delay {
+        return Err(UnicastMessageError::TooEarly);
+    }
+    if device.receive_and_process_message(message, frequency).is_err() {
+        return Err(UnicastMessageError::NotReceived);
+    }
+    
+    Ok(device.id())
+}
+
+fn broadcast_message(
+    message: &Message,
+    frequency: Megahertz,
+    device_map: &mut IdToDeviceMap,
+    delay_map: &IdToDelayMap,
+    current_time: Millisecond
+) -> Vec<DeviceId> {
+    let mut receiver_ids = Vec::new();
+
+    for device in device_map.devices_mut() {
+        let delay = delay_map
+            .get(&device.id())
+            .unwrap_or(&0);
+
+        let unicast_result = unicast_message(
+            message, 
+            frequency, 
+            device, 
+            *delay, 
+            current_time
+        );
+
+        if let Ok(device_id) = unicast_result {
+            receiver_ids.push(device_id);
+        }
+    }
+
+    receiver_ids
+}
 
 pub fn set_delay_map_for_message(
     message: &Message,
@@ -200,14 +288,16 @@ pub fn try_preprocess_message(
 mod tests {
     use std::collections::HashMap;
 
+    use crate::backend::CONTROL_FREQUENCY;
     use crate::backend::device::{Device, DeviceBuilder, BROADCAST_ID};
-    use crate::backend::device::systems::{PowerSystem, TRXModule, TRXSystem};
+    use crate::backend::device::systems::{
+        PowerSystem, TRXModule, TRXSystem, TRXSystemType
+    };
     use crate::backend::malware::{Malware, MalwareType};
     use crate::backend::mathphysics::{Meter, Point3D, PowerUnit};
     use crate::backend::message::{Task, Message};
     use crate::backend::signal::{
         SignalArea, SignalLevel, NO_SIGNAL_LEVEL, GREEN_SIGNAL_STRENGTH_VALUE, 
-        WIFI_2_4GHZ_FREQUENCY
     };
 
     use super::*;
@@ -225,7 +315,7 @@ mod tests {
     }
 
     fn drone_tx_module() -> TRXModule {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         
         let max_tx_signal_levels = HashMap::from([
             (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
@@ -245,7 +335,7 @@ mod tests {
     }
 
     fn drone_rx_module() -> TRXModule {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         
         let max_rx_signal_levels = HashMap::from([
             (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
@@ -265,10 +355,11 @@ mod tests {
             .set_real_position(position)
             .set_power_system(device_power_system())
             .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: drone_tx_module(),
-                    rx_module: drone_rx_module() 
-                }
+                TRXSystem::new(
+                    TRXSystemType::Strength,
+                    drone_tx_module(),
+                    drone_rx_module() 
+                )
             )
             .build()
     }

@@ -1,11 +1,12 @@
 use thiserror::Error;
 
+use crate::backend::CONTROL_FREQUENCY;
 use crate::backend::connections::ConnectionGraph;
 use crate::backend::device::{Device, DeviceId, IdToDeviceMap};
 use crate::backend::malware::Malware;
 use crate::backend::mathphysics::{Megahertz, Millisecond, Point3D};
 use crate::backend::message::{Message, MessageType, MessageQueue};
-use crate::backend::signal::{GPS_L1_FREQUENCY, WIFI_2_4GHZ_FREQUENCY};
+use crate::backend::signal::GPS_L1_FREQUENCY;
 
 
 #[derive(Error, Debug)]
@@ -112,7 +113,35 @@ pub fn enqueue_malicious_messages(
     }
 }
 
-pub fn process_electronic_warfare(
+pub fn process_attack(
+    device_map: &mut IdToDeviceMap,
+    message_queue: &mut MessageQueue,
+    attacker_device: &AttackerDevice, 
+    current_time: Millisecond,
+) {
+    match attacker_device.attack_type() {
+        AttackType::ElectronicWarfare             => 
+            process_electronic_warfare(device_map, attacker_device.device()),
+        AttackType::GPSSpoofing(spoofed_position) => 
+            process_gps_spoofing(
+                device_map, 
+                message_queue, 
+                attacker_device.device(),
+                &spoofed_position,
+                current_time,
+            ),
+        AttackType::MalwareDistribution(malware)  =>
+            process_malware(
+                device_map, 
+                message_queue, 
+                attacker_device.device(),
+                &malware,
+                current_time
+            )
+    }
+}
+
+fn process_electronic_warfare(
     device_map: &mut IdToDeviceMap, 
     ewd: &Device
 ) {
@@ -121,7 +150,7 @@ pub fn process_electronic_warfare(
     }
 }
 
-pub fn process_gps_spoofing(
+fn process_gps_spoofing(
     device_map: &mut IdToDeviceMap,
     message_queue: &mut MessageQueue,
     spoofer: &Device,
@@ -144,7 +173,7 @@ pub fn process_gps_spoofing(
     }
 }
 
-pub fn process_malware(
+fn process_malware(
     device_map: &mut IdToDeviceMap,
     message_queue: &mut MessageQueue,
     malware_distributor: &Device,
@@ -152,8 +181,7 @@ pub fn process_malware(
     current_time: Millisecond
 ) {
     for device in device_map.devices() {
-        // TODO add frequency parameter
-        if !malware_distributor.transmits_to(device, WIFI_2_4GHZ_FREQUENCY) {
+        if !malware_distributor.transmits_to(device, CONTROL_FREQUENCY) {
             continue;
         }
 
@@ -166,7 +194,7 @@ pub fn process_malware(
 
         message_queue.add_message(
             malicious_message,
-            WIFI_2_4GHZ_FREQUENCY, 
+            CONTROL_FREQUENCY, 
         );
     }
 }
@@ -210,13 +238,14 @@ mod tests {
 
     use crate::backend::connections::{ConnectionGraph, Topology};
     use crate::backend::device::{DeviceBuilder, DeviceId, IdToDeviceMap};
-    use crate::backend::device::systems::{PowerSystem, TRXModule, TRXSystem};
+    use crate::backend::device::systems::{
+        PowerSystem, TRXModule, TRXSystem, TRXSystemType
+    };
     use crate::backend::malware::{Malware, MalwareType};
     use crate::backend::mathphysics::{Meter, PowerUnit};
     use crate::backend::message::MessageType;
     use crate::backend::signal::{
         SignalArea, SignalLevel, GREEN_SIGNAL_STRENGTH_VALUE, NO_SIGNAL_LEVEL, 
-        WIFI_2_4GHZ_FREQUENCY
     };
 
     use super::*;
@@ -264,7 +293,7 @@ mod tests {
     }
 
     fn drone_tx_module() -> TRXModule {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         
         let max_tx_signal_levels = HashMap::from([
             (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
@@ -284,7 +313,7 @@ mod tests {
     }
 
     fn drone_rx_module() -> TRXModule {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         
         let max_rx_signal_levels = HashMap::from([
             (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
@@ -304,10 +333,11 @@ mod tests {
             .set_real_position(position)
             .set_power_system(device_power_system())
             .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: drone_tx_module(),
-                    rx_module: drone_rx_module() 
-                }
+                TRXSystem::new( 
+                    TRXSystemType::Strength,
+                    drone_tx_module(),
+                    drone_rx_module() 
+                )
             )
             .build()
     }
@@ -315,16 +345,17 @@ mod tests {
 
     #[test]
     fn multiplying_malicious_messages() {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         let malware   = jamming_malware(frequency);
 
         let command_center = DeviceBuilder::new()
             .set_power_system(device_power_system())
             .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: drone_tx_module(),
-                    rx_module: TRXModule::default() 
-                }
+                TRXSystem::new( 
+                    TRXSystemType::Strength,
+                    drone_tx_module(),
+                    TRXModule::default() 
+                )
             )
             .build();
         let command_center_id = command_center.id();

@@ -1,7 +1,6 @@
 use crate::backend::device::{Device, DeviceId, IdToDeviceMap};
 use crate::backend::mathphysics::{Megahertz, Millisecond, Position};
 use crate::backend::message::{Message, MessageType, MessageQueue};
-use crate::backend::signal::GREEN_SIGNAL_LEVEL;
 
 
 fn message_queue_already_contains_gps_message_for(
@@ -34,11 +33,9 @@ impl GPS {
     }
 
     pub fn connect_gps_to_all_devices(&self, device_map: &mut IdToDeviceMap) {
-        device_map.set_rx_signal_level(
-            // TODO make dependant on `self.device` 
-            &GREEN_SIGNAL_LEVEL,
-            self.frequency, 
-        );
+        for device in device_map.devices_mut() {
+            self.device.propagate_signal(device, self.frequency);
+        }
     }
 
     pub fn send_gps_messages(
@@ -48,7 +45,6 @@ impl GPS {
         current_time: Millisecond,
     ) {
         for (device_id, device) in device_map {
-            // TODO check if device is within reach 
             if message_queue_already_contains_gps_message_for(
                 message_queue, 
                 *device_id
@@ -73,13 +69,16 @@ impl GPS {
 mod tests {
     use std::collections::HashMap;
 
+    use crate::backend::CONTROL_FREQUENCY;
     use crate::backend::device::{Device, DeviceBuilder, SignalLossResponse};
-    use crate::backend::device::systems::{PowerSystem, TRXModule, TRXSystem};
+    use crate::backend::device::systems::{
+        PowerSystem, TRXModule, TRXSystem, TRXSystemType
+    };
     use crate::backend::mathphysics::{Meter, Point3D, PowerUnit};
     use crate::backend::message::Message;
     use crate::backend::signal::{
         SignalArea, SignalLevel, GPS_L1_FREQUENCY, GREEN_SIGNAL_STRENGTH_VALUE, 
-        NO_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
+        NO_SIGNAL_LEVEL, 
     };
 
     use super::*;
@@ -126,7 +125,7 @@ mod tests {
     }
 
     fn drone_tx_module() -> TRXModule {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         
         let max_tx_signal_levels = HashMap::from([
             (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
@@ -146,7 +145,7 @@ mod tests {
     }
 
     fn drone_rx_module() -> TRXModule {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         
         let max_rx_signal_levels = HashMap::from([
             (frequency, SignalLevel::from(VERY_BIG_STRENGTH_VALUE))
@@ -166,10 +165,11 @@ mod tests {
             .set_real_position(position)
             .set_power_system(device_power_system())
             .set_trx_system(
-                TRXSystem::Strength { 
-                    tx_module: drone_tx_module(),
-                    rx_module: drone_rx_module() 
-                }
+                TRXSystem::new( 
+                    TRXSystemType::Strength,
+                    drone_tx_module(),
+                    drone_rx_module() 
+                )
             )
             .build()
     }
@@ -199,10 +199,11 @@ mod tests {
             GPS_MAX_POWER, 
             GPS_MAX_POWER
         ).unwrap();
-        let trx_system = TRXSystem::Strength { 
-            tx_module: gps_tx_module(),
-            rx_module: drone_rx_module()
-        };
+        let trx_system = TRXSystem::new( 
+            TRXSystemType::Strength,
+            gps_tx_module(),
+            drone_rx_module()
+        );
 
         let device = DeviceBuilder::new()
             .set_real_position(DEFAULT_GPS_POSITION_IN_METERS)

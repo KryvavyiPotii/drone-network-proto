@@ -132,7 +132,7 @@ impl SignalLevel {
         }
     }
     
-    // self - SignalLevel of Receiver.
+    // self - maximum SignalLevel of Receiver.
     #[must_use]
     pub fn receive_by_color(&self, tx_signal_level: Self) -> Self {
         if !signal_level_change_happens(tx_signal_level) {

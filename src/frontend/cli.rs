@@ -1,8 +1,8 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
 use crate::backend::connections::Topology;
+use crate::backend::device::systems::TRXSystemType;
 use crate::backend::mathphysics::Millisecond;
-use crate::backend::networkmodel::NetworkModelType;
 
 use super::examples;
 
@@ -11,14 +11,14 @@ const ARG_DELAY_MULTIPLIER: &str = "delay multiplier";
 const ARG_DISPLAY_DELAYLESS_NETWORK: &str = "display delayless network";
 const ARG_EXAMPLE_NUMBER: &str   = "example number";
 const ARG_EXPERIMENT_TITLE: &str = "experiment title";
-const ARG_PLOT_HEIGHT: &str      = "plot height";
-const ARG_PLOT_WIDTH: &str       = "plot width";
 const ARG_INFECTION_TYPE: &str   = "infection type";
-const ARG_NETWORK_MODEL: &str    = "network model";
 const ARG_NETWORK_TOPOLOGY: &str = "network topology";
 const ARG_SC_MOVEMENT: &str      = "signal color movement";
 const ARG_SIM_TIME: &str         = "simulation time";
+const ARG_TRX_SYSTEM: &str       = "trx system";
 const ARG_PLOT_CAPTION: &str     = "plot caption";
+const ARG_PLOT_HEIGHT: &str      = "plot height";
+const ARG_PLOT_WIDTH: &str       = "plot width";
 
 const EXP_COMMAND_DELAYS: &str  = "delays";
 const EXP_DOS: &str             = "dos";
@@ -31,14 +31,13 @@ const EXP_INFECTION: &str       = "infection";
 const INF_INDICATOR: &str = "indicator";
 const INF_JAMMING: &str   = "jamming";
 
-const NM_STATEFUL: &str  = "sf";
-const NM_STATELESS: &str = "sl";
-
 const TOPOLOGY_MESH: &str = "mesh";
 const TOPOLOGY_STAR: &str = "star";
 
-const DEFAULT_DELAY_MULTIPLIER: &str = "0.0";
+const TRX_COLOR: &str    = "color";
+const TRX_STRENGTH: &str = "strength";
 
+const DEFAULT_DELAY_MULTIPLIER: &str = "0.0";
 const DEFAULT_PLOT_CAPTION: &str = "";
 const DEFAULT_PLOT_HEIGHT: &str  = "300";
 const DEFAULT_PLOT_WIDTH: &str   = "400";
@@ -47,7 +46,7 @@ const DEFAULT_SIM_TIME: &str     = "15000";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.14.2")
+        .version("0.15.0")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
@@ -87,9 +86,9 @@ pub fn cli() {
                     ARG_DISPLAY_DELAYLESS_NETWORK,
                     ARG_EXPERIMENT_TITLE,
                     ARG_INFECTION_TYPE,
-                    ARG_NETWORK_MODEL,
                     ARG_NETWORK_TOPOLOGY,
                     ARG_SC_MOVEMENT,
+                    ARG_TRX_SYSTEM,
                     ARG_PLOT_CAPTION,
                 ])
                 .value_parser(clap::value_parser!(u8))
@@ -99,7 +98,7 @@ pub fn cli() {
             Arg::new(ARG_EXPERIMENT_TITLE)
                 .short('x')
                 .long("experiment")
-                .requires(ARG_NETWORK_MODEL)
+                .requires(ARG_TRX_SYSTEM)
                 .requires(ARG_NETWORK_TOPOLOGY)
                 .requires_if(EXP_INFECTION, ARG_INFECTION_TYPE)
                 .value_parser([
@@ -114,11 +113,10 @@ pub fn cli() {
                 .help("Choose experiment title")
         )
         .arg(
-            Arg::new(ARG_NETWORK_MODEL)
-                .short('m')
-                .long("network-model")
-                .value_parser([NM_STATELESS, NM_STATEFUL])
-                .help("Choose network model")
+            Arg::new(ARG_TRX_SYSTEM)
+                .long("trx")
+                .value_parser([TRX_COLOR, TRX_STRENGTH])
+                .help("Choose device TRX system type")
         )
         .arg(
             Arg::new(ARG_DELAY_MULTIPLIER)
@@ -207,13 +205,13 @@ fn handle_arguments(matches: &ArgMatches) {
     let display_delayless_network = *matches
         .get_one::<bool>(ARG_DISPLAY_DELAYLESS_NETWORK)
         .unwrap();
-    let network_model = match matches
-        .get_one::<String>(ARG_NETWORK_MODEL)
+    let trx_system_type = match matches
+        .get_one::<String>(ARG_TRX_SYSTEM)
         .unwrap()
         .as_str()
     {
-        NM_STATEFUL  => NetworkModelType::Stateful,
-        NM_STATELESS => NetworkModelType::Stateless,
+        TRX_COLOR    => TRXSystemType::Color,
+        TRX_STRENGTH => TRXSystemType::Strength,
         _ => return,
     };
     let topology = match matches
@@ -234,7 +232,7 @@ fn handle_arguments(matches: &ArgMatches) {
         (plot_width, plot_height),
         simulation_time,
         display_delayless_network, 
-        network_model, 
+        trx_system_type, 
         topology,
         *delay_multiplier,
     );
@@ -278,286 +276,286 @@ fn run_example_by_number(
     match example_number {
         1  => examples::gps_only(
             &Config::new(
-                "Stateless Model (Star)",
+                "Strength Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Star,
                 0.0,
             )
         ),
         2  => examples::gps_and_control(
             &Config::new(
-                "Stateless Model (Star)",
+                "Strength Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Star,
                 0.0,
             )
         ),
         3  => examples::command_delay(
             &Config::new(
-                "Stateless Model (Star)",
+                "Strength Model (Star)",
                 plot_resolution,
                 simulation_time,
                 true,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Star,
                 1_000_000.0,
             )
         ),
         4  => examples::signal_color(
             &Config::new(
-                "Stateless Model (Star)",
+                "Strength Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Star,
                 0.0,
             )
         ),
         5  => examples::infection(
             &Config::new(
-                "Stateless Model (Star)",
+                "Strength Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Star,
                 1_000_000.0,
             )
         ),
         6  => examples::dos(
             &Config::new(
-                "Stateless Model (Star)",
+                "Strength Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Star,
                 10_000_000.0,
             )
         ),
         7  => examples::gps_only(
             &Config::new(
-                "Stateless Model (Mesh)",
+                "Strength Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Mesh,
                 0.0,
             )
         ),
         8  => examples::gps_and_control(
             &Config::new(
-                "Stateless Model (Mesh)",
+                "Strength Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Mesh,
                 0.0,
             )
         ),
         9  => examples::command_delay(
             &Config::new(
-                "Stateless Model (Mesh)",
+                "Strength Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 true,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Mesh,
                 1_000_000.0,
             )
         ),
         10 => examples::signal_color(
             &Config::new(
-                "Stateless Model (Mesh)",
+                "Strength Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Mesh,
                 0.0,
             )
         ),
         11 => examples::infection(
             &Config::new(
-                "Stateless Model (Mesh)",
+                "Strength Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Mesh,
                 1_000_000.0,
             )
         ),
         12 => examples::dos(
             &Config::new(
-                "Stateless Model (Mesh)",
+                "Strength Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Mesh,
                 10_000_000.0,
             )
         ),
         13 => examples::gps_only(
             &Config::new(
-                "Stateful Model (Star)",
+                "Color Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Star,
                 0.0,
             )
         ),
         14 => examples::gps_and_control(
             &Config::new(
-                "Stateful Model (Star)",
+                "Color Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Star,
                 0.0,
             )
         ),
         15 => examples::command_delay(
             &Config::new(
-                "Stateful Model (Star)",
+                "Color Model (Star)",
                 plot_resolution,
                 simulation_time,
                 true,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Star,
                 1_000_000.0,
             )
         ),
         16 => examples::signal_color(
             &Config::new(
-                "Stateful Model (Star)",
+                "Color Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Star,
                 0.0,
             )
         ),
         17 => examples::infection(
             &Config::new(
-                "Stateful Model (Star)",
+                "Color Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Star,
                 1_000_000.0,
             )
         ),
         18 => examples::dos(
             &Config::new(
-                "Stateful Model (Star)",
+                "Color Model (Star)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Star,
                 10_000_000.0,
             )
         ),
         19 => examples::gps_only(
             &Config::new(
-                "Stateful Model (Mesh)",
+                "Color Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Mesh,
                 0.0,
             )
         ),
         20 => examples::gps_and_control(
             &Config::new(
-                "Stateful Model (Mesh)",
+                "Color Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Mesh,
                 0.0,
             )
         ),
         21 => examples::command_delay(
             &Config::new(
-                "Stateful Model (Mesh)",
+                "Color Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 true,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Mesh,
                 1_000_000.0,
             )
         ),
         22 => examples::signal_color(
             &Config::new(
-                "Stateful Model (Mesh)",
+                "Color Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Mesh,
                 0.0,
             )
         ),
         23 => examples::infection(
             &Config::new(
-                "Stateful Model (Mesh)",
+                "Color Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Mesh,
                 1_000_000.0,
             )
         ),
         24 => examples::dos(
             &Config::new(
-                "Stateful Model (Mesh)",
+                "Color Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Mesh,
                 10_000_000.0,
             )
         ),
         25 => examples::signal_loss_response(
             &Config::new(
-                "Stateless Model (Mesh)",
+                "Strength Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateless,
+                TRXSystemType::Strength,
                 Topology::Mesh,
                 0.0,
             )
         ),
         26 => examples::signal_loss_response(
             &Config::new(
-                "Stateful Model (Mesh)",
+                "Color Model (Mesh)",
                 plot_resolution,
                 simulation_time,
                 false,
-                NetworkModelType::Stateful,
+                TRXSystemType::Color,
                 Topology::Mesh,
                 0.0
             )
@@ -578,7 +576,7 @@ pub struct Config {
     pub plot_resolution: (u16, u16),
     pub simulation_time: Millisecond,
     pub display_delayless_network: bool, 
-    pub network_model: NetworkModelType,
+    pub trx_system_type: TRXSystemType,
     pub topology: Topology,
     pub delay_multiplier: f32,
 }
@@ -590,7 +588,7 @@ impl Config {
         plot_resolution: (u16, u16),
         simulation_time: Millisecond,
         display_delayless_network: bool,
-        network_model: NetworkModelType,
+        trx_system_type: TRXSystemType,
         topology: Topology,
         delay_multiplier: f32
     ) -> Self {
@@ -599,17 +597,9 @@ impl Config {
             plot_resolution,
             simulation_time,
             display_delayless_network,
-            network_model,
+            trx_system_type,
             topology,
             delay_multiplier
-        }
-    }
-
-    #[must_use]
-    pub fn antenna(&self) -> AntennaType {
-        match self.network_model {
-            NetworkModelType::Stateful  => AntennaType::Color,
-            NetworkModelType::Stateless => AntennaType::Strength,
         }
     }
 }

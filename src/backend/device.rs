@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use thiserror::Error;
 
-use super::{DESTINATION_RADIUS, ITERATION_TIME};
+use super::{CONTROL_FREQUENCY, DESTINATION_RADIUS, ITERATION_TIME};
 use super::mathphysics::{
     equation_of_motion_3d, millis_to_secs, Megahertz, Meter, MeterPerSecond, 
     Point3D, Position, PowerUnit,
@@ -12,10 +12,7 @@ use super::malware::{
     InfectionState, Malware, MalwareToStateMap, MalwareType, 
     JAMMING_SIGNAL_LEVEL
 };
-use super::signal::{
-    FreqToLevelMap, SignalArea, SignalLevel, GPS_L1_FREQUENCY, 
-    WIFI_2_4GHZ_FREQUENCY
-};
+use super::signal::{FreqToLevelMap, SignalArea, SignalLevel, GPS_L1_FREQUENCY};
 
 use systems::{
     MovementSystem, PowerSystem, PowerSystemError, TRXSystem, TRXSystemError
@@ -181,7 +178,6 @@ pub struct Device {
     power_system: PowerSystem,
     movement_system: MovementSystem,
     trx_system: TRXSystem,
-    // TODO HashMap<MalwareId, InfectionState>
     infection_states: MalwareToStateMap,
     signal_loss_response: SignalLossResponse,
 }
@@ -463,10 +459,8 @@ impl Device {
     pub fn update_state(&mut self) -> Result<(), DeviceError> {
         self.try_consume_power(PASSIVE_POWER_CONSUMPTION)?;
         
-        // TODO generalize for any frequency
-        if self.receives_signal(WIFI_2_4GHZ_FREQUENCY) {
+        if self.receives_signal(CONTROL_FREQUENCY) {
             self.process_task();
-        // TODO add autonomous work as a parameter
         } else {
             self.handle_signal_loss();
         }
@@ -638,10 +632,12 @@ impl Position for Device {
 mod tests {
     use std::collections::HashMap;
 
+    use systems::TRXSystemType;
+
     use crate::backend::device::systems::TRXModule;
     use crate::backend::signal::{
         BLACK_SIGNAL_LEVEL, GREEN_SIGNAL_LEVEL, NO_SIGNAL_LEVEL, 
-        RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
+        RED_SIGNAL_LEVEL
     };
 
     use super::*;
@@ -661,10 +657,10 @@ mod tests {
 
     fn cc_tx_module() -> TRXModule {
         let max_tx_signal_levels = HashMap::from([(
-            WIFI_2_4GHZ_FREQUENCY, 
+            CONTROL_FREQUENCY, 
             SignalLevel::from_area(
                 SignalArea::build(CC_TX_CONTROL_RADIUS).unwrap(), 
-                WIFI_2_4GHZ_FREQUENCY
+                CONTROL_FREQUENCY
             )
         )]);
 
@@ -676,10 +672,10 @@ mod tests {
 
     fn drone_tx_module() -> TRXModule {
         let max_tx_signal_levels = HashMap::from([(
-            WIFI_2_4GHZ_FREQUENCY, 
+            CONTROL_FREQUENCY, 
             SignalLevel::from_area(
                 SignalArea::build(DRONE_TX_CONTROL_RADIUS).unwrap(), 
-                WIFI_2_4GHZ_FREQUENCY
+                CONTROL_FREQUENCY
             )
         )]);
 
@@ -692,11 +688,11 @@ mod tests {
     fn drone_rx_module() -> TRXModule {
         let max_rx_signal_levels = HashMap::from([
             (GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL),
-            (WIFI_2_4GHZ_FREQUENCY, GREEN_SIGNAL_LEVEL)
+            (CONTROL_FREQUENCY, GREEN_SIGNAL_LEVEL)
         ]);
         let rx_signal_levels = HashMap::from([
             (GPS_L1_FREQUENCY, RED_SIGNAL_LEVEL),
-            (WIFI_2_4GHZ_FREQUENCY, NO_SIGNAL_LEVEL)
+            (CONTROL_FREQUENCY, NO_SIGNAL_LEVEL)
         ]);
 
         TRXModule::build(
@@ -705,7 +701,7 @@ mod tests {
         ).unwrap()
     }
      
-    fn drone_green_rx_module(frequency: Megahertz) -> TRXModule {
+    fn drone_green_trx_module(frequency: Megahertz) -> TRXModule {
         let max_rx_signal_levels = HashMap::from([
             (frequency, GREEN_SIGNAL_LEVEL)
         ]);
@@ -722,10 +718,10 @@ mod tests {
     fn ewd_signal_levels() -> FreqToLevelMap {
         HashMap::from([
             (
-                WIFI_2_4GHZ_FREQUENCY, 
+                CONTROL_FREQUENCY, 
                 SignalLevel::from_area(
                     SignalArea::build(EWD_TX_CONTROL_RADIUS).unwrap(), 
-                    WIFI_2_4GHZ_FREQUENCY
+                    CONTROL_FREQUENCY
                 )
             ),
             (
@@ -743,8 +739,12 @@ mod tests {
             .unwrap_or_else(|error| panic!("{}", error))
     }
 
-    fn drone_green_rx_system(frequency: Megahertz) -> TRXSystem {
-        TRXSystem::Color(drone_green_rx_module(frequency))
+    fn drone_green_trx_system(frequency: Megahertz) -> TRXSystem {
+        TRXSystem::new(
+            TRXSystemType::Color,
+            drone_green_trx_module(frequency),
+            drone_green_trx_module(frequency),
+        )
     }
 
     fn device_is_destructed(device: &Device) -> bool {
@@ -790,33 +790,35 @@ mod tests {
         let command_center = DeviceBuilder::new()
             .set_power_system(device_power_system())
             .set_trx_system(
-                TRXSystem::Strength {
-                    tx_module: cc_tx_module(),
-                    rx_module: TRXModule::default()
-                }
+                TRXSystem::new(
+                    TRXSystemType::Strength,
+                    cc_tx_module(),
+                    TRXModule::default()
+                )
             )
             .build();
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
             .set_trx_system(
-                TRXSystem::Strength {
-                    tx_module: drone_tx_module(),
-                    rx_module: drone_rx_module()
-                }
+                TRXSystem::new(
+                    TRXSystemType::Strength,
+                    drone_tx_module(),
+                    drone_rx_module()
+                )
             )
             .build();
 
         assert!(
             device
-                .rx_signal_level(WIFI_2_4GHZ_FREQUENCY)
+                .rx_signal_level(CONTROL_FREQUENCY)
                 .is_black()
         );
 
-        command_center.propagate_signal(&mut device, WIFI_2_4GHZ_FREQUENCY);
+        command_center.propagate_signal(&mut device, CONTROL_FREQUENCY);
         
         assert!(
             device
-                .rx_signal_level(WIFI_2_4GHZ_FREQUENCY)
+                .rx_signal_level(CONTROL_FREQUENCY)
                 .is_green()
         );
     }
@@ -832,7 +834,7 @@ mod tests {
         ).unwrap_or_else(|error| panic!("{}", error));
         let movement_system = MovementSystem::build(25.0)
             .unwrap_or_else(|error| panic!("{}", error));
-        let trx_system      = drone_green_rx_system(WIFI_2_4GHZ_FREQUENCY);
+        let trx_system      = drone_green_trx_system(CONTROL_FREQUENCY);
 
         let mut device = DeviceBuilder::new()
             .set_task(task)
@@ -868,7 +870,7 @@ mod tests {
             .set_task(task)
             .set_power_system(device_power_system())
             .set_movement_system(drone_movement_system())
-            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .set_trx_system(drone_green_trx_system(GPS_L1_FREQUENCY))
             .set_signal_loss_response(signal_loss_response)
             .build();
         let original_position = device_without_signal.real_position_in_meters;
@@ -910,7 +912,7 @@ mod tests {
             .set_task(task)
             .set_power_system(device_power_system())
             .set_movement_system(drone_movement_system())
-            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .set_trx_system(drone_green_trx_system(GPS_L1_FREQUENCY))
             .set_signal_loss_response(signal_loss_response)
             .build();
         let original_position = device_without_signal.real_position_in_meters;
@@ -964,7 +966,7 @@ mod tests {
             .set_task(task)
             .set_power_system(device_power_system())
             .set_movement_system(drone_movement_system())
-            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .set_trx_system(drone_green_trx_system(GPS_L1_FREQUENCY))
             .set_signal_loss_response(signal_loss_response)
             .build();
 
@@ -1021,24 +1023,26 @@ mod tests {
     
     #[test]
     fn suppress_tranceivers_by_strength() {
-        let control_frequency = WIFI_2_4GHZ_FREQUENCY;
+        let control_frequency = CONTROL_FREQUENCY;
         let gps_frequency = GPS_L1_FREQUENCY;
         
-        let device_trx_system = TRXSystem::Strength {
-            tx_module: drone_tx_module(), 
-            rx_module: drone_rx_module()
-        };
+        let device_trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            drone_tx_module(), 
+            drone_rx_module()
+        );
         
         let ewd = DeviceBuilder::new()
             .set_power_system(device_power_system())
             .set_trx_system(
-                TRXSystem::Strength {
-                    tx_module: TRXModule::build(
+                TRXSystem::new (
+                    TRXSystemType::Strength,
+                    TRXModule::build(
                         ewd_signal_levels(),
                         ewd_signal_levels()
                     ).unwrap(),
-                    rx_module: TRXModule::default()
-                }
+                    TRXModule::default()
+                )
             )
             .build();
             
@@ -1091,7 +1095,7 @@ mod tests {
             .set_real_position(device_position)
             .set_power_system(device_power_system())
             .set_movement_system(drone_movement_system())
-            .set_trx_system(drone_green_rx_system(GPS_L1_FREQUENCY))
+            .set_trx_system(drone_green_trx_system(GPS_L1_FREQUENCY))
             .build();
 
         assert_eq!(
@@ -1148,20 +1152,21 @@ mod tests {
         let task              = Task::Reposition(destination_point);
         let max_rx_signal_levels = HashMap::from([
             (GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL),
-            (WIFI_2_4GHZ_FREQUENCY, GREEN_SIGNAL_LEVEL)
+            (CONTROL_FREQUENCY, GREEN_SIGNAL_LEVEL)
         ]);
         let rx_signal_levels = HashMap::from([
             (GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL),
-            (WIFI_2_4GHZ_FREQUENCY, GREEN_SIGNAL_LEVEL)
+            (CONTROL_FREQUENCY, GREEN_SIGNAL_LEVEL)
         ]);
         let rx_module = TRXModule::build(
             max_rx_signal_levels,
             rx_signal_levels
         ).unwrap();
-        let trx_system = TRXSystem::Strength { 
-            tx_module: TRXModule::default(), 
+        let trx_system = TRXSystem::new( 
+            TRXSystemType::Strength,
+            TRXModule::default(), 
             rx_module 
-        };
+        );
         
         let mut device = DeviceBuilder::new()
             .set_task(task)
@@ -1197,7 +1202,7 @@ mod tests {
         let power_system    = device_power_system();
         let movement_system = MovementSystem::build(25.0)
             .unwrap_or_else(|error| panic!("{}", error));
-        let trx_system      = drone_green_rx_system(WIFI_2_4GHZ_FREQUENCY);
+        let trx_system      = drone_green_trx_system(CONTROL_FREQUENCY);
 
         let mut device = DeviceBuilder::new()
             .set_task(task)
@@ -1218,12 +1223,12 @@ mod tests {
 
     #[test]
     fn receive_and_process_correct_set_task_message() {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         let task      = Task::Attack(Point3D::new(5.0, 0.0, 0.0));
 
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_trx_system(drone_green_rx_system(frequency))
+            .set_trx_system(drone_green_trx_system(frequency))
             .build();
             
         let message = Message::new(
@@ -1249,7 +1254,7 @@ mod tests {
         let mut device = DeviceBuilder::new()
             .set_real_position(global_position)
             .set_power_system(device_power_system())
-            .set_trx_system(drone_green_rx_system(frequency))
+            .set_trx_system(drone_green_trx_system(frequency))
             .build();
             
         assert_eq!(device.real_position_in_meters, global_position);
@@ -1272,12 +1277,12 @@ mod tests {
 
     #[test]
     fn receive_and_process_broadcast_message() {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
         let task      = Task::Attack(Point3D::new(5.0, 0.0, 0.0));
         
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_trx_system(drone_green_rx_system(frequency))
+            .set_trx_system(drone_green_trx_system(frequency))
             .build();    
         
         let message = Message::new(
@@ -1296,11 +1301,11 @@ mod tests {
 
     #[test]
     fn not_receive_and_process_message_with_wrong_destination() {
-        let frequency = WIFI_2_4GHZ_FREQUENCY;
+        let frequency = CONTROL_FREQUENCY;
 
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_trx_system(drone_green_rx_system(frequency))
+            .set_trx_system(drone_green_trx_system(frequency))
             .build();
             
         let message = Message::new(
@@ -1324,11 +1329,11 @@ mod tests {
 
     #[test]
     fn invulnerable_device_infection() {
-        let frequency  = WIFI_2_4GHZ_FREQUENCY;
+        let frequency  = CONTROL_FREQUENCY;
         let malware    = jamming_malware(frequency); 
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_trx_system(drone_green_rx_system(frequency))
+            .set_trx_system(drone_green_trx_system(frequency))
             .build(); 
         
         let message = Message::new(
@@ -1364,11 +1369,11 @@ mod tests {
 
     #[test]
     fn vulnerable_device_infection() {
-        let frequency  = WIFI_2_4GHZ_FREQUENCY;
+        let frequency  = CONTROL_FREQUENCY;
         let malware    = jamming_malware(frequency); 
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_trx_system(drone_green_rx_system(frequency))
+            .set_trx_system(drone_green_trx_system(frequency))
             .set_vulnerabilities(&[malware])
             .build(); 
         
@@ -1404,7 +1409,7 @@ mod tests {
 
     #[test]
     fn jamming_affects_only_specified_frequency() {
-        let jammed_frequency    = WIFI_2_4GHZ_FREQUENCY;
+        let jammed_frequency    = CONTROL_FREQUENCY;
         let untouched_frequency = GPS_L1_FREQUENCY;
         let jamming_malware     = jamming_malware(jammed_frequency); 
 
@@ -1412,15 +1417,19 @@ mod tests {
             (jammed_frequency, GREEN_SIGNAL_LEVEL),
             (untouched_frequency, GREEN_SIGNAL_LEVEL)
         ]); 
-        let rx_module = TRXModule::build(
+        let trx_module = TRXModule::build(
             green_signal_levels.clone(), 
             green_signal_levels
         ).unwrap_or_else(|error| panic!("{}", error));
-        let rx_system = TRXSystem::Color(rx_module);
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Color,
+            trx_module.clone(),
+            trx_module
+        );
 
         let mut device = DeviceBuilder::new()
             .set_power_system(device_power_system())
-            .set_trx_system(rx_system)
+            .set_trx_system(trx_system)
             .set_vulnerabilities(&[jamming_malware])
             .build();
         

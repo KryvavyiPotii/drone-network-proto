@@ -6,15 +6,13 @@ use plotters::prelude::*;
 use plotters::style::RGBColor;
 use thiserror::Error;
 
-use crate::backend::{DESTINATION_RADIUS, ITERATION_TIME};
+use crate::backend::{CONTROL_FREQUENCY, DESTINATION_RADIUS, ITERATION_TIME};
 use crate::backend::device::Device;
 use crate::backend::mathphysics::{Megahertz, Meter, Point3D, Position};
 use crate::backend::message::Task;
 use crate::backend::networkmodel::NetworkModel;
 use crate::backend::networkmodel::attack::{AttackerDevice, AttackType};
-use crate::backend::signal::{
-    SignalLevel, GPS_L1_FREQUENCY, WIFI_2_4GHZ_FREQUENCY
-};
+use crate::backend::signal::{SignalLevel, GPS_L1_FREQUENCY};
 
 
 const COMMAND_CENTER_RADIUS: Meter = 5.0;
@@ -130,7 +128,7 @@ fn attacker_device_primitive(
     let area_color = match frequency {
         GPS_L1_FREQUENCY if spoofs_gps => ORANGE,
         GPS_L1_FREQUENCY               => RED,
-        WIFI_2_4GHZ_FREQUENCY          => BLUE,
+        CONTROL_FREQUENCY              => BLUE,
         _                              => GREY
     };
 
@@ -184,7 +182,7 @@ fn get_drone_color(drone: &Device, coloring: DeviceColoring) -> RGBColor {
             color_by_infection(drone.is_infected())
         },
         DeviceColoring::Signal               => {
-            let signal_level = drone.rx_signal_level(WIFI_2_4GHZ_FREQUENCY);
+            let signal_level = drone.rx_signal_level(CONTROL_FREQUENCY);
             
             color_by_signal(*signal_level)
         },
@@ -453,7 +451,7 @@ impl<'a> PlottersRenderer<'a> {
             .map(|attacker_device| {
                 attacker_device_primitive(
                     attacker_device, 
-                    WIFI_2_4GHZ_FREQUENCY, 
+                    CONTROL_FREQUENCY, 
                     self.screen_resolution.1
                 )
             });

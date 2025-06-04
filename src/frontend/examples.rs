@@ -3,26 +3,27 @@ use std::ops::Range;
 
 use rand::prelude::*;
 
+use crate::backend::CONTROL_FREQUENCY;
 use crate::backend::connections::Topology;
 use crate::backend::device::{
     Device, DeviceBuilder, DeviceId, SignalLossResponse, BROADCAST_ID, 
     MAX_DRONE_SPEED 
 };
 use crate::backend::device::systems::{
-    MovementSystem, PowerSystem, TRXModule, TRXSystem
+    MovementSystem, PowerSystem, TRXModule, TRXSystem, TRXSystemType
 };
 use crate::backend::malware::{Malware, MalwareType};
 use crate::backend::mathphysics::{Megahertz, Meter, Point3D, PowerUnit};
 use crate::backend::message::{Task, Message, MessageType};
-use crate::backend::networkmodel::{NetworkModelBuilder, NetworkModelType}; 
+use crate::backend::networkmodel::NetworkModelBuilder; 
 use crate::backend::networkmodel::attack::{AttackType, AttackerDevice};
 use crate::backend::networkmodel::gps::GPS;
 use crate::backend::signal::{
     SignalArea, SignalLevel, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
-    RED_SIGNAL_LEVEL, WIFI_2_4GHZ_FREQUENCY
+    RED_SIGNAL_LEVEL
 };
 
-use super::cli::{AntennaType, Config};
+use super::cli::Config;
 use super::simulation::Simulation;
 use super::simulation::renderer::{
     Axes3DRanges, DeviceColoring, PlottersRenderer
@@ -48,38 +49,36 @@ const VULNERABILITY_PROBABILITY: f64 = 1.0;
 
 
 fn cc_trx_system(
-    antenna: &AntennaType, 
+    trx_system_type: TRXSystemType, 
     tx_control_area_radius: Meter
 ) -> TRXSystem {
     let tx_control_area = SignalArea::build(tx_control_area_radius)
         .unwrap();
 
     let max_tx_signal_levels = HashMap::from([(
-        WIFI_2_4GHZ_FREQUENCY, 
+        CONTROL_FREQUENCY, 
         SignalLevel::from(BIG_SIGNAL_STRENGTH_VALUE)
     )]);
     let tx_signal_levels = HashMap::from([(
-        WIFI_2_4GHZ_FREQUENCY,
-        SignalLevel::from_area(tx_control_area, WIFI_2_4GHZ_FREQUENCY)
+        CONTROL_FREQUENCY,
+        SignalLevel::from_area(tx_control_area, CONTROL_FREQUENCY)
     )]);
 
     let tx_module = TRXModule::build(
         max_tx_signal_levels,
         tx_signal_levels
     ).unwrap();
+    let rx_module = tx_module.clone();
 
-    match antenna {
-        AntennaType::Color    => TRXSystem::Color(tx_module),
-        AntennaType::Strength => {
-            let rx_module = tx_module.clone();
-
-            TRXSystem::Strength { tx_module, rx_module }
-        }
-    }
+    TRXSystem::new( 
+        trx_system_type,
+        tx_module, 
+        rx_module
+    )
 }
 
 fn drone_trx_system(
-    antenna: &AntennaType, 
+    trx_system_type: TRXSystemType, 
     tx_control_area_radius: Meter,
     max_gps_rx_signal_level: SignalLevel
 ) -> TRXSystem {
@@ -87,48 +86,35 @@ fn drone_trx_system(
         .unwrap();
     let max_tx_control_signal_level = SignalLevel::from_area(
         tx_control_area, 
-        WIFI_2_4GHZ_FREQUENCY
+        CONTROL_FREQUENCY
     );
 
-    match antenna {
-        AntennaType::Color    => {
-            let max_signal_levels = HashMap::from([
-                (WIFI_2_4GHZ_FREQUENCY, max_tx_control_signal_level),
-                (GPS_L1_FREQUENCY, max_gps_rx_signal_level)
-            ]); 
+    let max_tx_signal_levels = HashMap::from([
+        (CONTROL_FREQUENCY, max_tx_control_signal_level),
+    ]);
+    let max_rx_signal_levels = HashMap::from([
+        (CONTROL_FREQUENCY, GREEN_SIGNAL_LEVEL),
+        (GPS_L1_FREQUENCY, max_gps_rx_signal_level)
+    ]);
 
-            let trx_module = TRXModule::build(
-                max_signal_levels,
-                HashMap::new()
-            ).unwrap();
+    let tx_module = TRXModule::build(
+        max_tx_signal_levels,
+        HashMap::new()
+    ).unwrap();
+    let rx_module = TRXModule::build(
+        max_rx_signal_levels,
+        HashMap::new()
+    ).unwrap();
 
-            TRXSystem::Color(trx_module)
-        },
-        AntennaType::Strength => {
-            let max_tx_signal_levels = HashMap::from([
-                (WIFI_2_4GHZ_FREQUENCY, max_tx_control_signal_level),
-            ]);
-            let max_rx_signal_levels = HashMap::from([
-                (WIFI_2_4GHZ_FREQUENCY, GREEN_SIGNAL_LEVEL),
-                (GPS_L1_FREQUENCY, max_gps_rx_signal_level)
-            ]);
-
-            let tx_module = TRXModule::build(
-                max_tx_signal_levels,
-                HashMap::new()
-            ).unwrap();
-            let rx_module = TRXModule::build(
-                max_rx_signal_levels,
-                HashMap::new()
-            ).unwrap();
-
-            TRXSystem::Strength { tx_module, rx_module }
-        }
-    }
+    TRXSystem::new(
+        trx_system_type,
+        tx_module, 
+        rx_module
+    )
 }
 
 fn ewd_trx_system(
-    antenna: &AntennaType,
+    trx_system_type: TRXSystemType,
     frequency: Megahertz,
     suppression_area_radius: Meter
 ) -> TRXSystem {
@@ -149,13 +135,11 @@ fn ewd_trx_system(
         tx_signal_levels
     ).unwrap();
 
-    match antenna {
-        AntennaType::Color    => TRXSystem::Color(tx_module),
-        AntennaType::Strength => TRXSystem::Strength { 
-            tx_module, 
-            rx_module: TRXModule::default()
-        }
-    }
+    TRXSystem::new( 
+        trx_system_type,
+        tx_module, 
+        TRXModule::default()
+    )
 }
 
 fn gps_tx_module() -> TRXModule {
@@ -178,11 +162,12 @@ fn gps_tx_module() -> TRXModule {
     ).unwrap()
 }
 
-fn default_gps() -> GPS {
-    let trx_system = TRXSystem::Strength { 
-        tx_module: gps_tx_module(),
-        rx_module: TRXModule::default()
-    };
+fn default_gps(trx_system_type: TRXSystemType) -> GPS {
+    let trx_system = TRXSystem::new( 
+        trx_system_type,
+        gps_tx_module(),
+        TRXModule::default()
+    );
 
     let device = DeviceBuilder::new()
         .set_real_position(DEFAULT_GPS_POSITION_IN_METERS)
@@ -214,7 +199,7 @@ fn default_movement_scenario(
 
     vec!(
         (
-            WIFI_2_4GHZ_FREQUENCY,
+            CONTROL_FREQUENCY,
             Message::new(
                 command_center_id,
                 BROADCAST_ID,
@@ -223,7 +208,7 @@ fn default_movement_scenario(
             )
         ),
         (
-            WIFI_2_4GHZ_FREQUENCY,
+            CONTROL_FREQUENCY,
             Message::new(
                 command_center_id,
                 BROADCAST_ID,
@@ -232,7 +217,7 @@ fn default_movement_scenario(
             )
         ),
         (
-            WIFI_2_4GHZ_FREQUENCY,
+            CONTROL_FREQUENCY,
             Message::new(
                 command_center_id,
                 BROADCAST_ID,
@@ -241,7 +226,7 @@ fn default_movement_scenario(
             )
         ),
         (
-            WIFI_2_4GHZ_FREQUENCY,
+            CONTROL_FREQUENCY,
             Message::new(
                 command_center_id,
                 BROADCAST_ID,
@@ -253,23 +238,23 @@ fn default_movement_scenario(
 }
 
 fn derive_filename(config: &Config, text: &str) -> String {
-    let network_model_part = match config.network_model {
-        NetworkModelType::Stateful  => "sf",
-        NetworkModelType::Stateless => "sl",
+    let trx_system_part = match config.trx_system_type {
+        TRXSystemType::Color    => "col",
+        TRXSystemType::Strength => "str",
     };
     let topology_part = match config.topology {
         Topology::Mesh => "mesh",
         Topology::Star => "star",
     };
 
-    format!("{network_model_part}_{text}_{topology_part}.gif")
+    format!("{trx_system_part}_{text}_{topology_part}.gif")
 }
 
 fn create_device_vec(
     command_device: Device,
     network_position: &NetworkPosition,
     device_count: u32, 
-    antenna: &AntennaType,
+    trx_system_type: TRXSystemType,
     tx_control_area_radius: Meter,
     max_gps_rx_signal_level: SignalLevel,
     vulnerabilities: &[Malware]
@@ -279,7 +264,7 @@ fn create_device_vec(
     let power_system    = device_power_system();
     let movement_system = device_movement_system();
     let trx_system      = drone_trx_system(
-        antenna, 
+        trx_system_type, 
         tx_control_area_radius,
         max_gps_rx_signal_level
     );
@@ -361,7 +346,6 @@ impl NetworkPosition {
 
 
 pub fn gps_only(config: &Config) {
-    let antenna = config.antenna();
     let cc_tx_control_area_radius    = 300.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = RED_SIGNAL_LEVEL; 
@@ -370,7 +354,13 @@ pub fn gps_only(config: &Config) {
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
 
@@ -384,14 +374,14 @@ pub fn gps_only(config: &Config) {
         command_center,
         &network_position,
         100,
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius, 
         drone_gps_rx_signal_level, 
         &[]
     ); 
     let scenario = vec!(
         (
-            WIFI_2_4GHZ_FREQUENCY,
+            CONTROL_FREQUENCY,
             Message::new(
                 command_center_id,
                 BROADCAST_ID,
@@ -405,7 +395,7 @@ pub fn gps_only(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                &antenna, 
+                config.trx_system_type, 
                 GPS_L1_FREQUENCY, 
                 ewd_suppression_area_radius
             )
@@ -415,11 +405,11 @@ pub fn gps_only(config: &Config) {
         AttackerDevice::new(ewd_gps, AttackType::ElectronicWarfare)
     ];
 
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(scenario)
         .set_delay_multiplier(config.delay_multiplier)
@@ -447,7 +437,6 @@ pub fn gps_only(config: &Config) {
 }
 
 pub fn gps_and_control(config: &Config) {
-    let antenna = config.antenna();
     let cc_tx_control_area_radius           = 300.0;
     let drone_tx_control_area_radius        = 50.0;
     let drone_gps_rx_signal_level           = RED_SIGNAL_LEVEL; 
@@ -457,7 +446,13 @@ pub fn gps_and_control(config: &Config) {
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
     
@@ -471,14 +466,14 @@ pub fn gps_and_control(config: &Config) {
         command_center,
         &network_position,
         100, 
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
         &[]
     ); 
     let scenario = vec!(
         (
-            WIFI_2_4GHZ_FREQUENCY,
+            CONTROL_FREQUENCY,
             Message::new(
                 command_center_id,
                 BROADCAST_ID,
@@ -492,8 +487,8 @@ pub fn gps_and_control(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                &antenna,
-                WIFI_2_4GHZ_FREQUENCY,
+                config.trx_system_type,
+                CONTROL_FREQUENCY,
                 control_ewd_suppression_area_radius
             )
         )
@@ -503,7 +498,7 @@ pub fn gps_and_control(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                &antenna,
+                config.trx_system_type,
                 GPS_L1_FREQUENCY,
                 gps_ewd_suppression_area_radius
             )
@@ -514,11 +509,11 @@ pub fn gps_and_control(config: &Config) {
         AttackerDevice::new(ewd_gps, AttackType::ElectronicWarfare)
     ];
 
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(scenario)
         .set_delay_multiplier(config.delay_multiplier)
@@ -546,7 +541,6 @@ pub fn gps_and_control(config: &Config) {
 }
 
 pub fn command_delay(config: &Config) {
-    let antenna = config.antenna();
     let cc_tx_control_area_radius    = 1000.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
@@ -554,7 +548,13 @@ pub fn command_delay(config: &Config) {
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
 
@@ -568,7 +568,7 @@ pub fn command_delay(config: &Config) {
         command_center,
         &network_position,
         100, 
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
         &[]
@@ -578,22 +578,20 @@ pub fn command_delay(config: &Config) {
     let mut drone_networks = Vec::new();
 
     if config.display_delayless_network {
-        let delayless_drone_network = NetworkModelBuilder::new(
-                config.network_model
-            )
+        let delayless_drone_network = NetworkModelBuilder::new()
             .set_command_center_id(command_center_id)
             .set_devices(&devices)
-            .set_gps(default_gps())
+            .set_gps(default_gps(config.trx_system_type))
             .set_topology(config.topology)
             .set_scenario(scenario.clone())
             .build();
 
         drone_networks.push(delayless_drone_network);
     }
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(scenario)
         .set_delay_multiplier(config.delay_multiplier)
@@ -630,10 +628,9 @@ pub fn command_delay(config: &Config) {
 }
 
 pub fn signal_color(config: &Config) {
-    let antenna = config.antenna();
-    let cc_tx_control_area_radius    = match antenna {
-        AntennaType::Color    => 100.0,
-        AntennaType::Strength => 300.0
+    let cc_tx_control_area_radius    = match config.trx_system_type {
+        TRXSystemType::Color    => 100.0,
+        TRXSystemType::Strength => 300.0
     };
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
@@ -641,7 +638,13 @@ pub fn signal_color(config: &Config) {
     let command_center = DeviceBuilder::new()
         .set_real_position(Point3D::new(100.0, 50.0, 0.0))
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
 
@@ -655,17 +658,17 @@ pub fn signal_color(config: &Config) {
         command_center,
         &network_position,
         100, 
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
         &[]
     ); 
     let scenario = Vec::new(); 
 
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(scenario)
         .set_delay_multiplier(config.delay_multiplier)
@@ -694,10 +697,9 @@ pub fn signal_color(config: &Config) {
 }
 
 pub fn signal_color_dynamic(config: &Config) {
-    let antenna = config.antenna();
-    let cc_tx_control_area_radius    = match antenna {
-        AntennaType::Color    => 200.0,
-        AntennaType::Strength => 600.0
+    let cc_tx_control_area_radius    = match config.trx_system_type {
+        TRXSystemType::Color    => 200.0,
+        TRXSystemType::Strength => 600.0
     };
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
@@ -705,7 +707,13 @@ pub fn signal_color_dynamic(config: &Config) {
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
 
@@ -719,17 +727,17 @@ pub fn signal_color_dynamic(config: &Config) {
         command_center,
         &network_position,
         100, 
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
         &[]
     ); 
     let scenario = default_movement_scenario(command_center_id); 
 
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(scenario)
         .set_delay_multiplier(config.delay_multiplier)
@@ -757,22 +765,24 @@ pub fn signal_color_dynamic(config: &Config) {
 }
 
 pub fn infection(config: &Config) {
-    let antenna = config.antenna();
-    let cc_tx_control_area_radius    = match antenna {
-        AntennaType::Color    => 200.0,
-        AntennaType::Strength => 300.0
+    let cc_tx_control_area_radius    = match config.trx_system_type {
+        TRXSystemType::Color    => 200.0,
+        TRXSystemType::Strength => 300.0
     };
-    let drone_tx_control_area_radius = match config.network_model {
-        NetworkModelType::Stateful  => 20.0,
-        NetworkModelType::Stateless => 30.0,
-    };
+    let drone_tx_control_area_radius = 25.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
     let indicator_malware = indicator_malware();
 
     let command_center = DeviceBuilder::new()
         .set_real_position(Point3D::new(100.0, 50.0, 0.0))
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
 
@@ -786,14 +796,14 @@ pub fn infection(config: &Config) {
         command_center,
         &network_position,
         100, 
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
         &[indicator_malware]
     ); 
     let infected_drone_id = devices[1].id();
     let scenario = vec!((
-        WIFI_2_4GHZ_FREQUENCY,
+        CONTROL_FREQUENCY,
         Message::new(
             command_center_id,
             infected_drone_id,
@@ -802,10 +812,10 @@ pub fn infection(config: &Config) {
         ),
     ));
 
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(scenario)
         .set_delay_multiplier(config.delay_multiplier)
@@ -834,23 +844,28 @@ pub fn infection(config: &Config) {
 }
 
 pub fn jamming_infection(config: &Config) {
-    let antenna = config.antenna();
-    let cc_tx_control_area_radius    = match antenna {
-        AntennaType::Color    => 200.0,
-        AntennaType::Strength => 300.0
+    let cc_tx_control_area_radius    = match config.trx_system_type {
+        TRXSystemType::Color    => 200.0,
+        TRXSystemType::Strength => 300.0
     };
-    let drone_tx_control_area_radius = match config.network_model {
-        NetworkModelType::Stateful     => 12.5,
-        NetworkModelType::Stateless => 30.0,
+    let drone_tx_control_area_radius = match config.trx_system_type {
+        TRXSystemType::Color     => 12.5,
+        TRXSystemType::Strength => 30.0,
     };
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
     let indicator_malware = indicator_malware();
-    let jamming_malware   = jamming_malware(WIFI_2_4GHZ_FREQUENCY);
+    let jamming_malware   = jamming_malware(CONTROL_FREQUENCY);
 
     let command_center = DeviceBuilder::new()
         .set_real_position(Point3D::new(100.0, 50.0, 0.0))
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
 
@@ -865,14 +880,14 @@ pub fn jamming_infection(config: &Config) {
         command_center,
         &network_position,
         100, 
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
         &vulnerabilities
     ); 
     let infected_drone_id = devices[1].id();
     let indicator_scenario = vec!((
-        WIFI_2_4GHZ_FREQUENCY,
+        CONTROL_FREQUENCY,
         Message::new(
             command_center_id,
             infected_drone_id,
@@ -881,7 +896,7 @@ pub fn jamming_infection(config: &Config) {
         ),
     ));
     let jamming_scenario = vec!((
-        WIFI_2_4GHZ_FREQUENCY,
+        CONTROL_FREQUENCY,
         Message::new(
             command_center_id,
             infected_drone_id,
@@ -890,18 +905,18 @@ pub fn jamming_infection(config: &Config) {
         ),
     ));
 
-    let drone_network_indicator = NetworkModelBuilder::new(config.network_model)
+    let drone_network_indicator = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(indicator_scenario)
         .set_delay_multiplier(config.delay_multiplier)
         .build();
-    let drone_network_jamming = NetworkModelBuilder::new(config.network_model)
+    let drone_network_jamming = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(jamming_scenario)
         .set_delay_multiplier(config.delay_multiplier)
@@ -950,7 +965,6 @@ pub fn jamming_infection(config: &Config) {
 }
 
 pub fn gps_spoofing(config: &Config) {
-    let antenna = config.antenna();
     let cc_tx_control_area_radius    = 300.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = RED_SIGNAL_LEVEL; 
@@ -959,7 +973,13 @@ pub fn gps_spoofing(config: &Config) {
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
 
@@ -973,14 +993,14 @@ pub fn gps_spoofing(config: &Config) {
         command_center,
         &network_position,
         2,
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius, 
         drone_gps_rx_signal_level, 
         &[]
     ); 
     let scenario = vec!(
         (
-            WIFI_2_4GHZ_FREQUENCY,
+            CONTROL_FREQUENCY,
             Message::new(
                 command_center_id,
                 BROADCAST_ID,
@@ -994,7 +1014,7 @@ pub fn gps_spoofing(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                &antenna, 
+                config.trx_system_type, 
                 GPS_L1_FREQUENCY, 
                 gps_spoofing_area_radius
             )
@@ -1005,11 +1025,11 @@ pub fn gps_spoofing(config: &Config) {
         AttackerDevice::new(ewd_gps, AttackType::GPSSpoofing(spoofed_position))
     ];
 
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(scenario)
         .set_delay_multiplier(config.delay_multiplier)
@@ -1038,14 +1058,13 @@ pub fn gps_spoofing(config: &Config) {
 }
 
 pub fn dos(config: &Config) {
-    let antenna = config.antenna();
-    let cc_tx_control_area_radius    = match antenna {
-        AntennaType::Color    => 100.0,
-        AntennaType::Strength => 300.0
+    let cc_tx_control_area_radius    = match config.trx_system_type {
+        TRXSystemType::Color    => 100.0,
+        TRXSystemType::Strength => 300.0
     };
-    let drone_tx_control_area_radius = match config.network_model {
-        NetworkModelType::Stateful  => 20.0,
-        NetworkModelType::Stateless => 30.0,
+    let drone_tx_control_area_radius = match config.trx_system_type {
+        TRXSystemType::Color  => 20.0,
+        TRXSystemType::Strength => 30.0,
     };
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
     let dos_area_radius = 50.0;
@@ -1058,7 +1077,13 @@ pub fn dos(config: &Config) {
     let command_center = DeviceBuilder::new()
         .set_real_position(Point3D::new(100.0, 50.0, 0.0))
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
 
@@ -1072,7 +1097,7 @@ pub fn dos(config: &Config) {
         command_center,
         &network_position,
         100, 
-        &antenna,
+        config.trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
         &[dos_malware]
@@ -1083,8 +1108,8 @@ pub fn dos(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                &antenna,
-                WIFI_2_4GHZ_FREQUENCY,
+                config.trx_system_type,
+                CONTROL_FREQUENCY,
                 dos_area_radius
             )
         )
@@ -1096,11 +1121,11 @@ pub fn dos(config: &Config) {
         )
     ];
 
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_delay_multiplier(config.delay_multiplier)
         .build();
@@ -1128,7 +1153,6 @@ pub fn dos(config: &Config) {
 }
 
 pub fn signal_loss_response(config: &Config) {
-    let antenna = config.antenna();
     let cc_tx_control_area_radius    = 600.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
@@ -1137,7 +1161,13 @@ pub fn signal_loss_response(config: &Config) {
     let command_center = DeviceBuilder::new()
         .set_real_position(COMMAND_CENTER_POSITION)
         .set_power_system(device_power_system())
-        .set_trx_system(cc_trx_system(&antenna, cc_tx_control_area_radius))
+        .set_trx_system(
+            cc_trx_system(
+                config.trx_system_type, 
+                cc_tx_control_area_radius
+            )
+        )
+        .set_signal_loss_response(SignalLossResponse::Ignore)
         .build();
     let command_center_id = command_center.id();
    
@@ -1147,7 +1177,7 @@ pub fn signal_loss_response(config: &Config) {
         .set_movement_system(device_movement_system())
         .set_trx_system(
             drone_trx_system(
-                &antenna, 
+                config.trx_system_type, 
                 drone_tx_control_area_radius, 
                 drone_gps_rx_signal_level
             )
@@ -1181,7 +1211,7 @@ pub fn signal_loss_response(config: &Config) {
     
     let scenario = vec!(
         (
-            WIFI_2_4GHZ_FREQUENCY,
+            CONTROL_FREQUENCY,
             Message::new(
                 command_center_id,
                 BROADCAST_ID,
@@ -1196,8 +1226,8 @@ pub fn signal_loss_response(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                &antenna,
-                WIFI_2_4GHZ_FREQUENCY,
+                config.trx_system_type,
+                CONTROL_FREQUENCY,
                 control_ewd_suppression_area_radius
             )
         )
@@ -1206,11 +1236,11 @@ pub fn signal_loss_response(config: &Config) {
         AttackerDevice::new(ewd_control, AttackType::ElectronicWarfare)
     ];
     
-    let drone_network = NetworkModelBuilder::new(config.network_model)
+    let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps())
+        .set_gps(default_gps(config.trx_system_type))
         .set_topology(config.topology)
         .set_scenario(scenario)
         .set_delay_multiplier(config.delay_multiplier)

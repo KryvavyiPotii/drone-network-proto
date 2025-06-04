@@ -244,7 +244,7 @@ impl<const N: usize> From<[Device; N]> for IdToDeviceMap {
 #[cfg(test)]
 mod tests {
     use crate::backend::device::{DeviceBuilder, TRXSystem};
-    use crate::backend::device::systems::TRXModule;
+    use crate::backend::device::systems::{TRXModule, TRXSystemType};
     use crate::backend::signal::{GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL};
 
     use super::*;
@@ -265,10 +265,11 @@ mod tests {
                 (frequency2, GREEN_SIGNAL_LEVEL),
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
-        let trx_system = TRXSystem::Strength { 
-            tx_module: TRXModule::default(), 
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            TRXModule::default(), 
             rx_module 
-        };
+        );
         
         let device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
@@ -370,10 +371,11 @@ mod tests {
                 (frequency2, GREEN_SIGNAL_LEVEL),
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
-        let trx_system = TRXSystem::Strength { 
-            tx_module: TRXModule::default(), 
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            TRXModule::default(), 
             rx_module 
-        };
+        );
         
         let device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
@@ -473,10 +475,11 @@ mod tests {
                 (frequency2, GREEN_SIGNAL_LEVEL),
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
-        let trx_system = TRXSystem::Strength { 
-            tx_module, 
-            rx_module: TRXModule::default(), 
-        };
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            tx_module,
+            TRXModule::default(), 
+        );
         
         let device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
@@ -578,10 +581,11 @@ mod tests {
                 (frequency2, GREEN_SIGNAL_LEVEL),
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
-        let trx_system = TRXSystem::Strength { 
-            tx_module, 
-            rx_module: TRXModule::default(), 
-        };
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            tx_module,
+            TRXModule::default(), 
+        );
         
         let device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
@@ -681,10 +685,11 @@ mod tests {
                 (frequency2, GREEN_SIGNAL_LEVEL),
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
-        let trx_system = TRXSystem::Strength { 
-            tx_module: TRXModule::default(), 
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            TRXModule::default(), 
             rx_module 
-        };
+        );
         
         let rx_device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
@@ -792,10 +797,11 @@ mod tests {
                 (frequency2, GREEN_SIGNAL_LEVEL),
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
-        let trx_system = TRXSystem::Strength { 
-            tx_module: TRXModule::default(), 
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            TRXModule::default(), 
             rx_module 
-        };
+        );
         
         let rx_device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
@@ -895,10 +901,11 @@ mod tests {
                 (frequency2, GREEN_SIGNAL_LEVEL),
             ]),
         ).unwrap_or_else(|error| panic!("{}", error));
-        let trx_system = TRXSystem::Strength { 
-            tx_module: TRXModule::default(), 
-            rx_module
-        };
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            TRXModule::default(), 
+            rx_module 
+        );
 
         let device1 = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())
@@ -988,10 +995,11 @@ mod tests {
             HashMap::from([(frequency, GREEN_SIGNAL_LEVEL)]),
             HashMap::from([(frequency, GREEN_SIGNAL_LEVEL)]),
         ).unwrap_or_else(|error| panic!("{}", error));
-        let trx_system = TRXSystem::Strength { 
-            tx_module: empty_tx_module, 
-            rx_module
-        };
+        let trx_system = TRXSystem::new(
+            TRXSystemType::Strength,
+            empty_tx_module, 
+            rx_module 
+        );
 
         let command_device = DeviceBuilder::new()
             .set_trx_system(trx_system.clone())

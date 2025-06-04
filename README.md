@@ -31,8 +31,8 @@ Options:
           Run an experiment by its number
   -x, --experiment <experiment title>
           Choose experiment title [possible values: delays, dos, control, gps, gpsspoof, infection, signals]
-  -m, --network-model <network model>
-          Choose network model [possible values: sl, sf]
+      --trx <trx system>
+          Choose device TRX system type [possible values: color, strength]
   -d, --delay-multiplier <delay multiplier>
           Set signal transmission delay multiplier [default: 0.0]
   -t, --topology <network topology>
