@@ -33,12 +33,10 @@ const ERROR_MARGIN: f32 = 0.01;
 
 #[derive(Error, Debug)]
 pub enum ShortestPathError {
-    #[error("Astar algorithm failed")]
-    Astar,
     #[error("Shortest path was not found")]
     NoPathFound,
     #[error("Path length is less than 2")]
-    TooShortPath
+    PathTooShort
 }
     
 
@@ -255,10 +253,10 @@ impl ConnectionGraph {
         };
 
         if path.len() < 2 {
-            Err(ShortestPathError::TooShortPath)
-        } else {
-            Ok((distance, path))
-        }
+            return Err(ShortestPathError::PathTooShort);
+        } 
+        
+        Ok((distance, path))
     }
 
     #[must_use]
@@ -297,10 +295,7 @@ impl ConnectionGraph {
     pub fn diameter(&self) -> f32 {
         let shortest_paths: Vec<DictMap<DeviceId, f32>> = self.graph_map
             .nodes()
-            .map(|drone_id|
-                // unwrap() is used because dijkstra() is infallible.
-                self.dijkstra(drone_id, None).unwrap()
-            )
+            .map(|drone_id| self.dijkstra(drone_id, None).unwrap())
             .collect();
 
         shortest_paths
