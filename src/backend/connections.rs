@@ -101,71 +101,63 @@ impl ConnectionGraph {
             return 
         };
 
-        // The drones in the command device area forward the signal to each
-        // other and the drones outside the area.
-        // If there are no drones inside then the drones outside can not get 
-        // any signal.
-        // So, it is pointless to continue computation.
-        if !self.try_connect_devices_directly_to(
-            command_device, 
-            device_map,
-            frequency
-        ) {
-            return;
-        }
-
-        if let Topology::Mesh = self.topology {
-            self.connect_devices_to_each_other(device_map, frequency);
+        match self.topology {
+            Topology::Star => 
+                self.create_star(
+                    command_device, 
+                    device_map,
+                    frequency
+                ),
+            Topology::Mesh => 
+                self.create_mesh(device_map, frequency),
         }
     }
 
-    fn try_connect_devices_directly_to(
+    fn create_star(
         &mut self,
-        command_device: &Device,
+        central_device: &Device,
         device_map: &IdToDeviceMap,
         frequency: Megahertz
-    ) -> bool {
-        let mut connected = false;
-
+    ) {
         for (device_id, device) in device_map.iter() {
             // Loops are prohibited. Otherwise, shortest path algorithms will 
             // not function properly.
-            if *device_id == command_device.id() {
+            if *device_id == central_device.id() {
                 continue;
             }
 
-            let distance = command_device.distance_to(device);
+            let distance = central_device.distance_to(device);
 
-            if command_device.transmits_at(distance, frequency) {
+            if central_device.transmits_at(distance, frequency) {
                 self.graph_map.add_edge(
-                    command_device.id(), 
+                    central_device.id(), 
                     *device_id, 
                     distance
                 );
-                
-                connected = true;
             }
             if device.transmits_at(distance, frequency) {
                 self.graph_map.add_edge(
                     *device_id, 
-                    command_device.id(), 
+                    central_device.id(), 
                     distance
                 );
             }
         }
-
-        connected
     }
 
-    fn connect_devices_to_each_other(
+    fn create_mesh(
         &mut self, 
         device_map: &IdToDeviceMap,
         frequency: Megahertz
     ) {
-        for (i, (tx_id, tx)) in device_map.iter().enumerate() {
-            // Loops are prohibited. Otherwise, shortest path algorithms will 
-            // not function properly.
-            for (rx_id, rx) in device_map.iter().skip(i + 1) {
+        for (tx_id, tx) in device_map.iter() {
+            for (rx_id, rx) in device_map.iter() {
+                // Loops are prohibited. Otherwise, shortest path algorithms 
+                // will not function properly.
+                if tx_id == rx_id {
+                    continue;
+                }
+
                 let distance = tx.distance_to(rx);
         
                 if tx.transmits_at(distance, frequency) {
@@ -318,7 +310,7 @@ impl ConnectionGraph {
     }
 
     #[must_use]
-    pub fn node_load(&self) -> Vec<Option<f64>> {
+    pub fn betweenness_centrality(&self) -> Vec<Option<f64>> {
         betweenness_centrality(&self.graph_map, true, true, 50)
     }
 
