@@ -297,23 +297,6 @@ impl ConnectionGraph {
             .collect()
     }
     
-    // Translation of Python 3 NetworkX method `networkx.algorithms.cluster.\
-    // clustering` to Rust.
-    #[must_use]
-    pub fn clustering(&self) -> HashMap<DeviceId, f32> {
-        /*
-        td_iter = _directed_weighted_triangles_and_degree_iter(G, nodes, weight)
-        clusterc = {
-            v: 0 if t == 0 else t / ((dt * (dt - 1) - 2 * db) * 2)
-            for v, dt, db, t in td_iter
-        }
-
-        return clusterc
-        */
-
-        todo!()
-    }
-
     /// # Panics
     /// 
     /// Will panic if `rustworkx_core::shortest_path::dijkstra` becomes 
@@ -393,7 +376,6 @@ impl ConnectionGraph {
         percolation_map
     }
 
-    #[must_use]
     fn percolation_states(
         &self,
         command_device: &Device,
@@ -431,7 +413,6 @@ impl ConnectionGraph {
     /// # Panics
     ///
     /// Will never panic.
-    #[must_use]
     fn single_source_dijkstra_path_basic(
         &self, 
         source: DeviceId
