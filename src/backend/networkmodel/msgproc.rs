@@ -67,10 +67,10 @@ pub fn send_message(
         );
 
         if let Ok(device_id) = unicast_result {
-            vec![device_id]
-        } else {
-            Vec::new()
+            return vec![device_id];
         }
+            
+        Vec::new()
     }
 }
 
@@ -182,21 +182,51 @@ fn delay_map_from_device_outside_network(
     let destination_id = message.destination_id();
 
     if destination_id == BROADCAST_ID {
-        return connections 
-            .devices()
-            .filter_map(|device_id| {
-                let destination_device = device_map.get(&destination_id)?; 
-                
-                let delay = delay_to(
-                    source_device.distance_to(destination_device), 
-                    delay_multiplier
-                );
-
-                Some((device_id, delay))
-            })
-            .collect();
+        return broadcast_delay_map_from_device_outside_network(
+            destination_id, 
+            source_device, 
+            device_map, 
+            connections, 
+            delay_multiplier
+        );
     } 
 
+    unicast_delay_map_from_device_outside_network(
+        destination_id, 
+        source_device, 
+        device_map, 
+        delay_multiplier
+    )
+}
+
+fn broadcast_delay_map_from_device_outside_network(
+    destination_id: DeviceId,
+    source_device: &Device,
+    device_map: &IdToDeviceMap,
+    connections: &ConnectionGraph,
+    delay_multiplier: f32,
+) -> IdToDelayMap {
+    connections 
+        .devices()
+        .filter_map(|device_id| {
+            let destination_device = device_map.get(&destination_id)?; 
+            
+            let delay = delay_to(
+                source_device.distance_to(destination_device), 
+                delay_multiplier
+            );
+
+            Some((device_id, delay))
+        })
+        .collect()
+}
+
+fn unicast_delay_map_from_device_outside_network(
+    destination_id: DeviceId,
+    source_device: &Device,
+    device_map: &IdToDeviceMap,
+    delay_multiplier: f32,
+) -> IdToDelayMap {
     let Some(destination_device) = device_map.get(&destination_id) else {
         return IdToDelayMap::new();
     };
