@@ -1,28 +1,32 @@
-use std::ops::Range;
-
-use full_palette::{GREEN_400, GREY, ORANGE, PINK, RED_400, YELLOW_700};
-use plotters::coord::{ranged3d::Cartesian3d, types::RangedCoordf64, Shift};
+use full_palette::GREY;
+use plotters::coord::Shift;
+use plotters::coord::ranged3d::Cartesian3d;
+use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
-use plotters::style::RGBColor;
 use thiserror::Error;
 
-use crate::backend::{CONTROL_FREQUENCY, DESTINATION_RADIUS, ITERATION_TIME};
-use crate::backend::device::Device;
-use crate::backend::mathphysics::{Megahertz, Meter, Point3D, Position};
+use crate::backend::{CONTROL_FREQUENCY, ITERATION_TIME};
+use crate::backend::mathphysics::Point3D;
 use crate::backend::message::Task;
 use crate::backend::networkmodel::NetworkModel;
-use crate::backend::networkmodel::attack::{AttackerDevice, AttackType};
-use crate::backend::signal::{SignalLevel, GPS_L1_FREQUENCY};
+use crate::backend::networkmodel::attack::AttackerDevice;
+use crate::backend::signal::GPS_L1_FREQUENCY;
+
+use primitives::{
+    attacker_device_primitive, command_device_primitive, destination_primitive, 
+    device_primitive
+};
+
+pub use plotcfg::{
+    Axes3DRanges, CameraAngle, DeviceColoring, PlotResolution, meters_to_pixels, 
+    plotters_point_from_point3d
+};
+
+use plotcfg::{font_size, PLOT_MARGIN};
 
 
-const COMMAND_CENTER_RADIUS: Meter = 5.0;
-
-const METRES_TO_PIXELS_SCALE_CONSTANT: f32 = 400.0;
-const CIRCLE_SIZE_COEFFICIENT: u32         = 400;
-const PLOT_MARGIN: u32                     = 20;
-
-const PLOTTERS_DESTINATION_COLOR: RGBColor    = YELLOW;
-const PLOTTERS_COMMAND_CENTER_COLOR: RGBColor = GREEN;
+mod plotcfg;
+mod primitives;
 
 
 type PlottersChartContext<'a> = ChartContext<
@@ -30,7 +34,6 @@ type PlottersChartContext<'a> = ChartContext<
     BitMapBackend<'a>, 
     Cartesian3d<RangedCoordf64, RangedCoordf64, RangedCoordf64>
 >;
-type PlottersCircle = Circle<(f64, f64, f64), u32>; 
 
 
 fn network_models_destinations(
@@ -59,168 +62,6 @@ fn network_models_destinations(
     destinations
 }
 
-fn font_size(screen_width: u16) -> u16 {
-    screen_width / 15
-}
-
-fn destination_primitive( 
-    destination: &Point3D,
-    screen_height: u16,
-) -> PlottersCircle {
-    let point = plotters_point_from_point3d(destination);
-    let radius = meters_to_pixels(
-        DESTINATION_RADIUS,
-        screen_height
-    );
-
-    Circle::new(point, radius, PLOTTERS_DESTINATION_COLOR)
-}
-
-fn command_device_primitive(
-    command_device: &Device,
-    screen_height: u16,
-) -> PlottersCircle {
-    let point = plotters_point_from_point3d(command_device.position());
-    let radius = meters_to_pixels(
-        COMMAND_CENTER_RADIUS,
-        screen_height
-    );  
-    
-    Circle::new(point, radius, PLOTTERS_COMMAND_CENTER_COLOR)
-}
-
-fn device_primitive(
-    drone: &Device,
-    coloring: DeviceColoring,
-    screen_height: u16
-) -> PlottersCircle {
-    let screen_height = u32::from(screen_height);
-
-    let point = plotters_point_from_point3d(drone.position());
-    let color = get_drone_color(drone, coloring);
-    let style = Into::<ShapeStyle>::into(color).filled();
-    let size  = if screen_height < CIRCLE_SIZE_COEFFICIENT {
-        1  
-    } else {
-        screen_height / CIRCLE_SIZE_COEFFICIENT
-    };
-
-    Circle::new(point, size, style)
-}
-
-fn attacker_device_primitive(
-    attacker_device: &AttackerDevice,
-    frequency: Megahertz,
-    screen_height: u16
-) -> PlottersCircle {
-    let radius = attacker_device
-        .device()
-        .area(frequency)
-        .radius();
-    let device_position = attacker_device.device().position();
-    let spoofs_gps = matches!(
-        attacker_device.attack_type(), 
-        AttackType::GPSSpoofing(_)
-    );
-
-    let point = plotters_point_from_point3d(device_position);
-    let attacker_device_coverage = meters_to_pixels(radius, screen_height);
-    let area_color = match frequency {
-        GPS_L1_FREQUENCY if spoofs_gps => ORANGE,
-        GPS_L1_FREQUENCY               => RED,
-        CONTROL_FREQUENCY              => BLUE,
-        _                              => GREY
-    };
-
-    Circle::new(point, attacker_device_coverage, area_color)
-}
-
-fn plotters_point_from_point3d(point: &Point3D) -> (f64, f64, f64) {
-    (    
-        f64::from(point.x), 
-        f64::from(point.z), 
-        f64::from(point.y), 
-    )
-}
-
-#[allow(clippy::cast_sign_loss)]
-#[allow(clippy::cast_possible_truncation)]
-fn meters_to_pixels(
-    value: Meter,
-    screen_height: u16
-) -> u32 {
-    // This value is very rough because it does not 
-    // consider the perspective.
-    let coef = f32::from(screen_height) / METRES_TO_PIXELS_SCALE_CONSTANT;
-
-    (value * coef).round() as u32 
-}
-
-fn color_by_infection(infected: bool) -> RGBColor {
-    if infected {
-        PINK
-    } else {
-        BLACK
-    }
-}
-
-fn color_by_signal(signal_level: SignalLevel) -> RGBColor {
-    if signal_level.is_green() {
-        GREEN_400
-    } else if signal_level.is_yellow() {
-        YELLOW_700
-    } else if signal_level.is_red() {
-        RED_400
-    } else {
-        BLACK
-    }
-}
-
-fn get_drone_color(drone: &Device, coloring: DeviceColoring) -> RGBColor {
-    match coloring {
-        DeviceColoring::Infection            => {
-            color_by_infection(drone.is_infected())
-        },
-        DeviceColoring::Signal               => {
-            let signal_level = drone.rx_signal_level(CONTROL_FREQUENCY);
-            
-            color_by_signal(*signal_level)
-        },
-        DeviceColoring::SingleColor(r, g, b) => {
-            RGBColor(r, g, b)
-        }
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct Axes3DRanges {
-    x: Range<f64>,
-    y: Range<f64>,
-    z: Range<f64>
-}
-
-impl Axes3DRanges {
-    #[must_use]
-    pub fn new(
-        x: Range<f64>,
-        y: Range<f64>,
-        z: Range<f64>
-    ) -> Self {
-        Self { x, y, z }
-    }
-}
-
-impl Default for Axes3DRanges {
-    fn default() -> Self {
-        Self {
-            x: 0.0..200.0,
-            y: 0.0..200.0,
-            z: 0.0..200.0,
-        }
-    }
-}
-
 
 #[derive(Debug, Error)]
 pub enum RenderError {
@@ -229,24 +70,15 @@ pub enum RenderError {
 }
 
 
-#[derive(Clone, Copy)]
-pub enum DeviceColoring {
-    Infection,
-    Signal,
-    SingleColor(u8, u8, u8),
-}
-
-
 pub struct PlottersRenderer<'a> {
     output_filename: String,
     caption: String,
-    screen_resolution: (u16, u16),
-    font_size: u16,
+    plot_resolution: PlotResolution,
+    font_size: u32,
     axes_ranges: Axes3DRanges,
-    drone_colors: Vec<DeviceColoring>,
+    camera_angle: CameraAngle,
+    device_colorings: Vec<DeviceColoring>,
     area: DrawingArea<BitMapBackend<'a>, Shift>, 
-    pitch: f64,
-    yaw: f64
 }
 
 impl<'a> PlottersRenderer<'a> {
@@ -257,22 +89,17 @@ impl<'a> PlottersRenderer<'a> {
     pub fn new(
         output_filename: &str,
         caption: &str,
-        screen_resolution: (u16, u16),
+        plot_resolution: PlotResolution,
         axes_ranges: Axes3DRanges,
-        drone_colors: &[DeviceColoring],
-        pitch: f64,
-        yaw: f64
+        device_colorings: &[DeviceColoring],
+        camera_angle: CameraAngle,
     ) -> Self {
-        let font_size = font_size(screen_resolution.0);
+        let font_size = font_size(plot_resolution);
         let output_filename = output_filename.to_string();
 
-        let plotters_screen_resolution = (
-            u32::from(screen_resolution.0),
-            u32::from(screen_resolution.1),
-        );
         let area = BitMapBackend::gif(
             &output_filename, 
-            plotters_screen_resolution,
+            plot_resolution.into(),
             ITERATION_TIME
                 .try_into()
                 .expect("Failed to convert i32 to u32")
@@ -283,13 +110,12 @@ impl<'a> PlottersRenderer<'a> {
         Self {
             output_filename,
             caption: caption.to_string(),
-            screen_resolution,
+            plot_resolution,
             font_size,
             axes_ranges,
-            drone_colors: drone_colors.to_vec(),
+            camera_angle,
+            device_colorings: device_colorings.to_vec(),
             area,
-            pitch,
-            yaw
         }
     }
 
@@ -310,17 +136,22 @@ impl<'a> PlottersRenderer<'a> {
         &mut self, 
         network_models: &[NetworkModel]
     ) -> Result<(), RenderError> {
-        if self.drone_colors.len() != network_models.len() {
+        if self.device_colorings.len() != network_models.len() {
             return Err(RenderError::NotMatchingColorNumber);
         }
-        self.area.fill(&WHITE).expect("Failed to fill an area");
+        
+        self.area
+            .fill(&WHITE)
+            .expect("Failed to fill an area");
         
         let mut chart_context = self.chart_context();
 
         self.draw_chart(&mut chart_context);
         self.draw_network_models(network_models, &mut chart_context);
 
-        self.area.present().expect("Failed to finalize drawing");
+        self.area
+            .present()
+            .expect("Failed to finalize drawing");
 
         Ok(())
     }
@@ -331,23 +162,23 @@ impl<'a> PlottersRenderer<'a> {
         if !self.caption.is_empty() {
             chart_builder.caption(
                 &self.caption, 
-                ("sans-serif", u32::from(self.font_size))
+                ("sans-serif", self.font_size)
             );
         }
 
         let mut chart = chart_builder
             .margin(PLOT_MARGIN)
             .build_cartesian_3d(
-                self.axes_ranges.x.clone(),
-                self.axes_ranges.y.clone(),
-                self.axes_ranges.z.clone(),
+                self.axes_ranges.x(),
+                self.axes_ranges.y(),
+                self.axes_ranges.z(),
             )
             .expect("Failed to create a chart");
 
         chart
             .with_projection(|mut p| {
-                p.pitch = self.pitch;
-                p.yaw = self.yaw;
+                p.pitch = self.camera_angle.pitch();
+                p.yaw = self.camera_angle.yaw();
                 p.into_matrix()
             });
 
@@ -360,9 +191,11 @@ impl<'a> PlottersRenderer<'a> {
         chart_context: &mut PlottersChartContext<'a>
     ) {
         let destinations = network_models_destinations(network_models);
+
         self.draw_destinations(&destinations, chart_context);
         self.draw_command_devices(network_models, chart_context);
         self.draw_devices(network_models, chart_context);
+        
         for network_model in network_models {
             self.draw_attacker_devices(
                 network_model.attacker_devices(), 
@@ -390,7 +223,7 @@ impl<'a> PlottersRenderer<'a> {
             .map(|destination| 
                 destination_primitive(
                     destination, 
-                    self.screen_resolution.1
+                    self.plot_resolution
                 )
             );
 
@@ -409,7 +242,7 @@ impl<'a> PlottersRenderer<'a> {
             .map(|network_model| 
                 command_device_primitive(
                     network_model.command_device(), 
-                    self.screen_resolution.1
+                    self.plot_resolution
                 )
             );
 
@@ -425,7 +258,7 @@ impl<'a> PlottersRenderer<'a> {
     ) {
         for (network_model, coloring) in network_models
             .iter()
-            .zip(self.drone_colors.iter())
+            .zip(self.device_colorings.iter())
         {
             let device_primitives = network_model
                 .device_iter()
@@ -433,7 +266,7 @@ impl<'a> PlottersRenderer<'a> {
                     device_primitive(
                         device, 
                         *coloring, 
-                        self.screen_resolution.0
+                        self.plot_resolution
                     )
                 );
 
@@ -452,7 +285,7 @@ impl<'a> PlottersRenderer<'a> {
                 attacker_device_primitive(
                     attacker_device, 
                     CONTROL_FREQUENCY, 
-                    self.screen_resolution.1
+                    self.plot_resolution
                 )
             });
         let gps_attacker_device_primitives = attacker_devices
@@ -461,7 +294,7 @@ impl<'a> PlottersRenderer<'a> {
                 attacker_device_primitive(
                     attacker_device, 
                     GPS_L1_FREQUENCY, 
-                    self.screen_resolution.1
+                    self.plot_resolution
                 )
             });
 

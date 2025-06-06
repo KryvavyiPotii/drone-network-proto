@@ -5,6 +5,7 @@ use crate::backend::device::systems::TRXSystemType;
 use crate::backend::mathphysics::Millisecond;
 
 use super::examples;
+use super::renderer::PlotResolution;
 
 
 const ARG_DELAY_MULTIPLIER: &str = "delay multiplier";
@@ -46,7 +47,7 @@ const DEFAULT_SIM_TIME: &str     = "15000";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.15.2")
+        .version("0.15.3")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
@@ -59,7 +60,7 @@ pub fn cli() {
             Arg::new(ARG_PLOT_WIDTH)
                 .long("width")
                 .requires(ARG_PLOT_HEIGHT)
-                .value_parser(clap::value_parser!(u16))
+                .value_parser(clap::value_parser!(u32))
                 .default_value(DEFAULT_PLOT_WIDTH)
                 .help("Set the plot width")
         )
@@ -67,7 +68,7 @@ pub fn cli() {
             Arg::new(ARG_PLOT_HEIGHT)
                 .long("height")
                 .requires(ARG_PLOT_WIDTH)
-                .value_parser(clap::value_parser!(u16))
+                .value_parser(clap::value_parser!(u32))
                 .default_value(DEFAULT_PLOT_HEIGHT)
                 .help("Set the plot height")
         )
@@ -175,11 +176,12 @@ pub fn cli() {
 
 fn handle_arguments(matches: &ArgMatches) {
     let plot_width = *matches
-        .get_one::<u16>(ARG_PLOT_WIDTH)
+        .get_one::<u32>(ARG_PLOT_WIDTH)
         .unwrap();
     let plot_height = *matches
-        .get_one::<u16>(ARG_PLOT_HEIGHT)
+        .get_one::<u32>(ARG_PLOT_HEIGHT)
         .unwrap();
+    let plot_resolution = PlotResolution::new(plot_width, plot_height);
     let simulation_time = *matches
         .get_one::<Millisecond>(ARG_SIM_TIME)
         .unwrap();
@@ -187,7 +189,7 @@ fn handle_arguments(matches: &ArgMatches) {
     if let Some(example_number) = matches.get_one::<u8>(ARG_EXAMPLE_NUMBER) {
         run_example_by_number(
             *example_number,
-            (plot_width, plot_height),
+            plot_resolution,
             simulation_time,
         );
         return;
@@ -229,7 +231,7 @@ fn handle_arguments(matches: &ArgMatches) {
 
     let config = Config::new(
         plot_caption, 
-        (plot_width, plot_height),
+        plot_resolution,
         simulation_time,
         display_delayless_network, 
         trx_system_type, 
@@ -270,7 +272,7 @@ fn handle_arguments(matches: &ArgMatches) {
 
 fn run_example_by_number(
     example_number: u8,
-    plot_resolution: (u16, u16),
+    plot_resolution: PlotResolution,
     simulation_time: Millisecond,
 ) {
     match example_number {
@@ -573,7 +575,7 @@ pub enum AntennaType {
 
 pub struct Config {
     pub plot_caption: String,
-    pub plot_resolution: (u16, u16),
+    pub plot_resolution: PlotResolution,
     pub simulation_time: Millisecond,
     pub display_delayless_network: bool, 
     pub trx_system_type: TRXSystemType,
@@ -585,7 +587,7 @@ impl Config {
     #[must_use]
     pub fn new(
         plot_caption: &str,
-        plot_resolution: (u16, u16),
+        plot_resolution: PlotResolution,
         simulation_time: Millisecond,
         display_delayless_network: bool,
         trx_system_type: TRXSystemType,

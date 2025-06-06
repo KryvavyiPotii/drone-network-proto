@@ -24,10 +24,8 @@ use crate::backend::signal::{
 };
 
 use super::cli::Config;
-use super::simulation::Simulation;
-use super::simulation::renderer::{
-    Axes3DRanges, DeviceColoring, PlottersRenderer
-};
+use super::player::ModelPlayer;
+use super::renderer::{Axes3DRanges, CameraAngle, DeviceColoring, PlottersRenderer};
 
 
 const BIG_SIGNAL_STRENGTH_VALUE: f32 = 100_000.0;
@@ -417,17 +415,17 @@ pub fn gps_only(config: &Config) {
 
     let output_filename = derive_filename(config, "gps_only");
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
+    let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
-        0.15,
-        0.5,
+        camera_angle
     );
 
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network],
         renderer
@@ -521,17 +519,17 @@ pub fn gps_and_control(config: &Config) {
  
     let output_filename = derive_filename(config, "gps_and_control"); 
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
+    let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
-        0.15,
-        0.5,
+        camera_angle
     );
     
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network],
         renderer
@@ -608,17 +606,17 @@ pub fn command_delay(config: &Config) {
     } else {
         vec![DeviceColoring::SingleColor(0, 0, 0)]
     };
+    let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
-        0.15,
-        0.5,
+        camera_angle
     );
 
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         drone_networks,
         renderer
@@ -677,17 +675,17 @@ pub fn signal_color(config: &Config) {
     let output_filename = derive_filename(config, "signal_color");
     let drone_colorings = vec![DeviceColoring::Signal];
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
+    let camera_angle    = CameraAngle::new(1.57, 1.57);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         axes_ranges,
         &drone_colorings,
-        1.57,
-        1.57
+        camera_angle
     );
     
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network],
         renderer
@@ -745,17 +743,17 @@ pub fn signal_color_dynamic(config: &Config) {
 
     let output_filename = derive_filename(config, "signal_color_dynamic");
     let drone_colorings = vec![DeviceColoring::Signal];
+    let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
-        0.15,
-        0.5,
+        camera_angle,
     );
     
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network],
         renderer
@@ -824,17 +822,17 @@ pub fn infection(config: &Config) {
     let output_filename = derive_filename(config, "infection");
     let drone_colorings = vec![DeviceColoring::Infection]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
+    let camera_angle    = CameraAngle::new(1.57, 1.57);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         axes_ranges,
         &drone_colorings,
-        1.57,
-        1.57
+        camera_angle,
     );
 
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network],
         renderer
@@ -925,14 +923,14 @@ pub fn jamming_infection(config: &Config) {
     let output_filename = derive_filename(config, "infection_indicator");
     let drone_colorings = vec![DeviceColoring::Infection]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
+    let camera_angle    = CameraAngle::new(1.57, 1.57);
     let indicator_renderer = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         axes_ranges.clone(),
         &drone_colorings,
-        1.57,
-        1.57
+        camera_angle
     );
     
     let output_filename = derive_filename(config, "infection_jamming");
@@ -943,23 +941,20 @@ pub fn jamming_infection(config: &Config) {
         config.plot_resolution,
         axes_ranges,
         &drone_colorings,
-        1.57,
-        1.57
+        camera_angle
     );
 
-    let mut indicator_simulation = Simulation::new(
+    let mut indicator_simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network_indicator],
         indicator_renderer
     );
-    let mut jamming_simulation = Simulation::new(
+    let mut jamming_simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network_jamming],
         jamming_renderer
     );
 
-    // CTRL+C handler in `simulation` should be disabled in order for that 
-    // example to work.
     indicator_simulation.run();
     jamming_simulation.run();
 }
@@ -1038,17 +1033,17 @@ pub fn gps_spoofing(config: &Config) {
     let output_filename = derive_filename(config, "gps_spoofing");
     let axes_ranges     = Axes3DRanges::new(0.0..200.0, 0.0..0.0, 0.0..200.0);
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
+    let camera_angle    = CameraAngle::new(1.57, 1.57);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         axes_ranges,
         &drone_colorings,
-        1.57,
-        1.57
+        camera_angle,
     );
 
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network],
         renderer
@@ -1133,17 +1128,17 @@ pub fn dos(config: &Config) {
     let output_filename = derive_filename(config, "dos");
     let drone_colorings = vec![DeviceColoring::Signal]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
+    let camera_angle    = CameraAngle::new(1.57, 1.57);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         axes_ranges,
         &drone_colorings,
-        1.57,
-        1.57
+        camera_angle
     );
 
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network],
         renderer
@@ -1248,17 +1243,17 @@ pub fn signal_loss_response(config: &Config) {
  
     let output_filename = derive_filename(config, "signal_loss_response"); 
     let drone_colorings = vec![DeviceColoring::Signal]; 
+    let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         &config.plot_caption,
         config.plot_resolution,
         Axes3DRanges::default(),
         &drone_colorings,
-        0.15,
-        0.5,
+        camera_angle,
     );
     
-    let mut simulation = Simulation::new(
+    let mut simulation = ModelPlayer::new(
         config.simulation_time,
         vec![drone_network],
         renderer

@@ -1,27 +1,11 @@
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-
 use log::{info, trace};
 
 use crate::backend::ITERATION_TIME;
 use crate::backend::networkmodel::NetworkModel;
 use crate::backend::mathphysics::Millisecond;
 
-use renderer::PlottersRenderer;
+use super::renderer::PlottersRenderer;
 
-
-pub mod renderer;
-
-
-fn set_ctrlc_handler() -> Arc<AtomicBool> {
-    let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
-
-    ctrlc_async::set_handler(move || {
-        r.store(false, Ordering::SeqCst);
-    }).expect("Error setting Ctrl-C handler");
-
-    running
-}
 
 fn log_device_count(network_models: &[NetworkModel]) -> String {
     let mut output = String::new();
@@ -43,14 +27,14 @@ fn log_device_count(network_models: &[NetworkModel]) -> String {
 }
 
 
-pub struct Simulation<'a> {
+pub struct ModelPlayer<'a> {
     current_time: Millisecond,
     end_time: Millisecond,
     network_models: Vec<NetworkModel>,
     renderer: PlottersRenderer<'a>
 }
 
-impl<'a> Simulation<'a> {
+impl<'a> ModelPlayer<'a> {
     #[must_use]
     pub fn new(
         end_time: Millisecond,
@@ -69,21 +53,11 @@ impl<'a> Simulation<'a> {
     ///
     /// Will panic if an error occurs during rendering. 
     pub fn run(&mut self) {
-        let running = set_ctrlc_handler(); 
-
         let end = self.end_time;
 
         info!("Output filename: {}", self.renderer.output_filename());
-        for _ in (0..end).step_by(ITERATION_TIME as usize) {
-            if !running.load(std::sync::atomic::Ordering::SeqCst) { 
-                info!(
-                    "TERM, Simulation, Time: {}, {}", 
-                    self.current_time,
-                    log_device_count(&self.network_models)
-                );
-                return;
-            }
 
+        for _ in (0..end).step_by(ITERATION_TIME as usize) {
             self.network_models
                 .iter_mut()
                 .for_each(NetworkModel::update);
@@ -97,6 +71,7 @@ impl<'a> Simulation<'a> {
                 self.current_time,
                 log_device_count(&self.network_models)
             );
+
             self.current_time += ITERATION_TIME;
         }
 
