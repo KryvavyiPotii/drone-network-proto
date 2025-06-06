@@ -81,35 +81,34 @@ fn multiply_malicious_message(
     }
 }
 
-pub fn enqueue_malicious_messages(
+pub fn add_malicious_messages_to_queue(
     malicious_messages: &Vec<(Megahertz, Message)>,
     message_queue: &mut MessageQueue,
-    drone_map: &IdToDeviceMap,
+    device_map: &IdToDeviceMap,
 ) {
-    let mut infected_drones = Vec::new();
+    let mut infected_devices = Vec::new();
 
     for (frequency, malicious_message) in malicious_messages {
-        let Some(drone) = drone_map.get(
+        let Some(device) = device_map.get(
             &malicious_message.destination_id()
         ) else {
             continue;
         };
 
-        let MessageType::Malware(malware) = malicious_message.message_type() 
-            else
-        {
+        let MessageType::Malware(malware) = malicious_message.message_type(
+        ) else {
             continue;    
         };
 
-        if drone.is_infected_with(malware) 
-            || infected_drones.contains(&drone.id()) 
+        if device.is_infected_with(malware) 
+            || infected_devices.contains(&device.id()) 
         {
             continue;
         }
 
         message_queue.add_message(*malicious_message, *frequency);
         
-        infected_drones.push(drone.id());
+        infected_devices.push(device.id());
     }
 }
 

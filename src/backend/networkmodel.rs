@@ -10,7 +10,7 @@ use super::mathphysics::{Megahertz, Millisecond};
 use super::message::{Message, MessageQueue, MessageType, Task};
 
 use attack::{
-    AttackerDevice, enqueue_malicious_messages, process_attack,
+    AttackerDevice, add_malicious_messages_to_queue, process_attack,
     try_multiply_malicious_message_from_receivers,
 };
 use gps::GPS;
@@ -390,7 +390,7 @@ impl NetworkModel {
         
         self.message_queue.remove_finished_messages();
 
-        enqueue_malicious_messages(
+        add_malicious_messages_to_queue(
             &malicious_messages,
             &mut self.message_queue,
             &self.device_map,
