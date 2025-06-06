@@ -1,41 +1,21 @@
 use std::collections::HashMap;
 
-use thiserror::Error;
-
-use crate::backend::connections::{ConnectionGraph, ShortestPathError};
+use crate::backend::connections::ConnectionGraph;
 use crate::backend::device::{Device, DeviceId, IdToDeviceMap, IdToLevelMap};
 use crate::backend::mathphysics::Megahertz;
 use crate::backend::signal::NO_SIGNAL_LEVEL;
 
 
-#[derive(Error, Debug)]
-pub enum SignalUpdateError {
-    #[error("Shortest Path algorithm failed to calculate path.")]
-    AlgorithmError(ShortestPathError),
-    #[error("Missing a drone")]
-    MissingDevice,
-}
-
-impl From<ShortestPathError> for SignalUpdateError {
-    fn from(error: ShortestPathError) -> Self {
-        Self::AlgorithmError(error)  
-    }
-}
-
-
-/// # Errors
-///
-/// Will return Err if the first drone on found shortest path is not 
-/// present in `IdToDeviceMap`.
-pub fn try_find_best_signal_levels(
+pub fn get_best_signal_levels_for_controlled_devices(
     command_device_id: DeviceId,
     device_map: &IdToDeviceMap,
     connections: &ConnectionGraph,
     frequency: Megahertz
-) -> Result<IdToLevelMap, SignalUpdateError> {
+) -> IdToLevelMap {
     let Some(command_device) = device_map.get(&command_device_id) else {
-        return Err(SignalUpdateError::MissingDevice);
+        return IdToLevelMap::new(); 
     };
+    
     let mut best_signal_levels = HashMap::from([
         (command_device_id, *command_device.tx_signal_level(frequency))
     ]);
@@ -48,7 +28,7 @@ pub fn try_find_best_signal_levels(
             continue;
         };
     
-        traverse_path_and_set_better_signal_level(
+        traverse_path_and_get_better_signal_level(
             &path, 
             device_map, 
             &mut best_signal_levels, 
@@ -56,10 +36,10 @@ pub fn try_find_best_signal_levels(
         );
     }
 
-    Ok(best_signal_levels)
+    best_signal_levels
 }
 
-fn traverse_path_and_set_better_signal_level(
+fn traverse_path_and_get_better_signal_level(
     path: &[DeviceId], 
     device_map: &IdToDeviceMap,
     best_signal_levels: &mut IdToLevelMap,
@@ -73,7 +53,7 @@ fn traverse_path_and_set_better_signal_level(
         let Some(tx) = device_map.get(&tx_id) else { break };
         let Some(rx) = device_map.get(&rx_id) else { break };
 
-        try_set_better_signal_level(
+        get_better_signal_level(
             tx,
             rx,
             best_signal_levels,
@@ -82,7 +62,7 @@ fn traverse_path_and_set_better_signal_level(
     }
 }
 
-fn try_set_better_signal_level(
+fn get_better_signal_level(
     tx: &Device,
     rx: &Device,
     signal_levels: &mut IdToLevelMap,
@@ -107,6 +87,7 @@ fn try_set_better_signal_level(
         signal_levels.insert(rx.id(), signal_level_at_rx);
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -208,7 +189,7 @@ mod tests {
         ]; 
 
         for drone in &drones {
-            try_set_better_signal_level(
+            get_better_signal_level(
                 &command_center,
                 drone, 
                 &mut best_signal_levels, 

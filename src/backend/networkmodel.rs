@@ -18,7 +18,7 @@ use msgproc::{
     MessageProcessError, send_message, set_delay_map_for_message, try_add_task, 
     try_finish_message, try_preprocess_message
 };
-use signalupdate::try_find_best_signal_levels;
+use signalupdate::get_best_signal_levels_for_controlled_devices;
 
 
 pub mod attack;
@@ -254,23 +254,21 @@ impl NetworkModel {
     fn update_signal_levels(&mut self) {
         self.device_map.clear_rx_signal_levels(CONTROL_FREQUENCY);
         
-        if let Ok(
-            control_signal_levels
-        ) = try_find_best_signal_levels(
+        let new_signal_levels = get_best_signal_levels_for_controlled_devices(
             self.command_device_id,
             &self.device_map,
             &self.connections,
             CONTROL_FREQUENCY
-        ) {
-            self.device_map.all_receive_signal_levels(
-                &control_signal_levels, 
-                CONTROL_FREQUENCY
-            );
-            self.device_map.copy_all_rx_signal_levels_to_tx(
-                &self.command_device_id,
-                CONTROL_FREQUENCY
-            );
-        }
+        );
+
+        self.device_map.all_receive_signal_levels(
+            &new_signal_levels, 
+            CONTROL_FREQUENCY
+        );
+        self.device_map.copy_all_rx_signal_levels_to_tx(
+            &self.command_device_id,
+            CONTROL_FREQUENCY
+        );
     }
     
     fn reconnect_devices(&mut self) {
