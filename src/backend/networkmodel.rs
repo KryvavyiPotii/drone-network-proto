@@ -273,6 +273,54 @@ impl NetworkModel {
         }
     }
     
+    fn reconnect_devices(&mut self) {
+        self.remove_shut_down_devices();
+
+        for (device_id, device) in &self.device_map {
+            if !matches!(device.task(), Task::Reconnect(_)) {
+                continue;
+            };
+
+            let current_task = *self.current_tasks
+                .get(device_id)
+                .unwrap_or(&Task::Undefined);
+            
+            let task_message = Message::new(
+                self.command_device_id, 
+                *device_id, 
+                self.current_time, 
+                MessageType::SetTask(current_task)
+            );
+
+            self.message_queue.add_message(
+                task_message,
+                CONTROL_FREQUENCY, 
+            );
+        }
+    }
+    
+    fn remove_shut_down_devices(&mut self) {
+        self.device_map.retain(|device_id, device|
+            *device_id == self.command_device_id
+            || device.receives_signal(CONTROL_FREQUENCY)
+            || !matches!(
+                device.signal_loss_response(), 
+                SignalLossResponse::Shutdown
+            )
+        );
+    }
+    
+    fn process_attacks(&mut self) {
+        for attacker_device in &self.attacker_devices {
+            process_attack(
+                &mut self.device_map, 
+                &mut self.message_queue, 
+                attacker_device,
+                self.current_time,
+            ); 
+        }
+    }
+    
     fn process_message_queue(&mut self) {
         if self.message_queue.is_empty() {
             return;
@@ -339,6 +387,7 @@ impl NetworkModel {
                 &mut malicious_messages
             );
         }
+        
         self.message_queue.remove_finished_messages();
 
         enqueue_malicious_messages(
@@ -347,54 +396,7 @@ impl NetworkModel {
             &self.device_map,
         );
     }
-
-    fn reconnect_devices(&mut self) {
-        self.remove_shut_down_devices();
-
-        for (device_id, device) in &self.device_map {
-            let Task::Reconnect(_) = device.task() else {
-                continue;
-            };
-
-            let current_task = *self.current_tasks
-                .get(device_id)
-                .unwrap_or(&Task::Undefined);
-            let task_message = Message::new(
-                self.command_device_id, 
-                *device_id, 
-                self.current_time, 
-                MessageType::SetTask(current_task)
-            );
-
-            self.message_queue.add_message(
-                task_message,
-                CONTROL_FREQUENCY, 
-            );
-        }
-    }
-    
-    fn remove_shut_down_devices(&mut self) {
-        self.device_map.retain(|device_id, device|
-            *device_id == self.command_device_id
-            || device.receives_signal(CONTROL_FREQUENCY)
-            || !matches!(
-                device.signal_loss_response(), 
-                SignalLossResponse::Shutdown
-            )
-        );
-    }
-    
-    fn process_attacks(&mut self) {
-        for attacker_device in &self.attacker_devices {
-            process_attack(
-                &mut self.device_map, 
-                &mut self.message_queue, 
-                attacker_device,
-                self.current_time,
-            ); 
-        }
-    }
-
+   
     fn connect_gps_to_all_devices(&mut self) {
         self.gps.connect_gps_to_all_devices(&mut self.device_map);
     }
