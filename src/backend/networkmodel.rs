@@ -54,7 +54,7 @@ fn get_any_device<'a>(
 #[derive(Clone, Default)]
 pub struct NetworkModelBuilder {
     command_center_id: Option<DeviceId>,
-    devices: Option<Vec<Device>>,
+    device_map: Option<IdToDeviceMap>,
     attacker_devices: Option<Vec<AttackerDevice>>,
     gps: Option<GPS>,
     topology: Option<Topology>,
@@ -67,7 +67,7 @@ impl NetworkModelBuilder {
     pub fn new() -> Self {
         Self {
             command_center_id: None,
-            devices: None,
+            device_map: None,
             attacker_devices: None,
             gps: None,
             topology: None,
@@ -87,7 +87,7 @@ impl NetworkModelBuilder {
 
     #[must_use]
     pub fn set_devices(mut self, devices: &[Device]) -> Self {
-        self.devices = Some(devices.to_vec());
+        self.device_map = Some(IdToDeviceMap::from(devices));
         self
     }
 
@@ -126,15 +126,9 @@ impl NetworkModelBuilder {
 
     #[must_use]
     pub fn build(self) -> NetworkModel {
-        let device_map = IdToDeviceMap::from(
-            self.devices
-                .unwrap_or_default()
-                .as_slice()
-        );
-        
         NetworkModel::new(
             self.command_center_id.unwrap_or_default(),
-            device_map,
+            self.device_map.unwrap_or_default(),
             self.attacker_devices.unwrap_or_default(),
             self.gps.unwrap_or_default(),
             &self.scenario.unwrap_or_default(),
