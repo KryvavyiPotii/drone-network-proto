@@ -185,6 +185,7 @@ impl ConnectionGraph {
         }
     }
     
+    #[must_use]
     pub fn delay_map(
         &self,
         source_device: &Device,
