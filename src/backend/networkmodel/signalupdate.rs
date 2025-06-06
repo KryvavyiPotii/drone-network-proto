@@ -88,17 +88,20 @@ fn try_set_better_signal_level(
     signal_levels: &mut IdToLevelMap,
     frequency: Megahertz
 ) {
-    // TODO find a way to avoid cloning (without multiple mutable borrows)
-    let mut tx = tx.clone();
-
-    if let Some(tx_signal_level) = signal_levels.get(&tx.id()) {
-        tx.set_tx_signal_level(*tx_signal_level, frequency);
-    }
-
     let rx_signal_level = signal_levels
         .get(&rx.id())
         .unwrap_or(&NO_SIGNAL_LEVEL);
-    let signal_level_at_rx = tx.propagated_signal_level_at(rx, frequency);
+
+    let signal_level_at_rx = if let Some(tx_signal_level) = signal_levels.get(
+        &tx.id()
+    ) {
+        let mut tx_with_better_signal = tx.clone();
+        tx_with_better_signal.set_tx_signal_level(*tx_signal_level, frequency);
+
+        tx_with_better_signal.propagated_signal_level_at(rx, frequency)
+    } else {
+        tx.propagated_signal_level_at(rx, frequency)
+    };
 
     if signal_level_at_rx > *rx_signal_level {
         signal_levels.insert(rx.id(), signal_level_at_rx);
