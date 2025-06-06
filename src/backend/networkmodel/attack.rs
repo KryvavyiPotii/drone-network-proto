@@ -112,92 +112,6 @@ pub fn add_malicious_messages_to_queue(
     }
 }
 
-pub fn process_attack(
-    device_map: &mut IdToDeviceMap,
-    message_queue: &mut MessageQueue,
-    attacker_device: &AttackerDevice, 
-    current_time: Millisecond,
-) {
-    match attacker_device.attack_type() {
-        AttackType::ElectronicWarfare             => 
-            process_electronic_warfare(device_map, attacker_device.device()),
-        AttackType::GPSSpoofing(spoofed_position) => 
-            process_gps_spoofing(
-                device_map, 
-                message_queue, 
-                attacker_device.device(),
-                &spoofed_position,
-                current_time,
-            ),
-        AttackType::MalwareDistribution(malware)  =>
-            process_malware(
-                device_map, 
-                message_queue, 
-                attacker_device.device(),
-                &malware,
-                current_time
-            )
-    }
-}
-
-fn process_electronic_warfare(
-    device_map: &mut IdToDeviceMap, 
-    ewd: &Device
-) {
-    for device in device_map.devices_mut() {
-        ewd.suppress_all_signals(device);
-    }
-}
-
-fn process_gps_spoofing(
-    device_map: &mut IdToDeviceMap,
-    message_queue: &mut MessageQueue,
-    spoofer: &Device,
-    spoofed_position: &Point3D,
-    current_time: Millisecond,
-) {
-    for device in device_map.devices() {
-        if !spoofer.transmits_to(device, GPS_L1_FREQUENCY) {
-            continue;
-        }
-
-        let fake_gps_message = Message::new(
-            spoofer.id(), 
-            device.id(), 
-            current_time, 
-            MessageType::GPS(*spoofed_position)
-        );
-
-        message_queue.add_message(fake_gps_message, GPS_L1_FREQUENCY);
-    }
-}
-
-fn process_malware(
-    device_map: &mut IdToDeviceMap,
-    message_queue: &mut MessageQueue,
-    malware_distributor: &Device,
-    malware: &Malware,
-    current_time: Millisecond
-) {
-    for device in device_map.devices() {
-        if !malware_distributor.transmits_to(device, CONTROL_FREQUENCY) {
-            continue;
-        }
-
-        let malicious_message = Message::new(
-            malware_distributor.id(), 
-            device.id(), 
-            current_time + malware.infection_delay(), 
-            MessageType::Malware(*malware)
-        );
-
-        message_queue.add_message(
-            malicious_message,
-            CONTROL_FREQUENCY, 
-        );
-    }
-}
-
 
 #[derive(Clone, Copy, Debug)]
 pub enum AttackType {
@@ -227,6 +141,83 @@ impl AttackerDevice {
     #[must_use]
     pub fn attack_type(&self) -> AttackType {
         self.attack_type
+    }
+
+    pub fn execute_attack(
+        &self,
+        device_map: &mut IdToDeviceMap,
+        message_queue: &mut MessageQueue,
+        current_time: Millisecond,
+    ) {
+        match self.attack_type {
+            AttackType::ElectronicWarfare      => 
+                self.execute_electronic_warfare(device_map),
+            AttackType::GPSSpoofing(_)         => 
+                self.spoof_gps(device_map, message_queue, current_time),
+            AttackType::MalwareDistribution(_) =>
+                self.spread_malware(device_map, message_queue, current_time)
+        }
+    }
+
+    fn execute_electronic_warfare(&self, device_map: &mut IdToDeviceMap) {
+        for device in device_map.devices_mut() {
+            self.device.suppress_all_signals(device);
+        }
+    }
+
+    fn spoof_gps(
+        &self,
+        device_map: &mut IdToDeviceMap,
+        message_queue: &mut MessageQueue,
+        current_time: Millisecond,
+    ) {
+        let AttackType::GPSSpoofing(spoofed_position) = self.attack_type else {
+            return
+        };
+
+        for device in device_map.devices() {
+            if !self.device.transmits_to(device, GPS_L1_FREQUENCY) {
+                continue;
+            }
+
+            let fake_gps_message = Message::new(
+                self.device.id(), 
+                device.id(), 
+                current_time, 
+                MessageType::GPS(spoofed_position)
+            );
+
+            message_queue.add_message(fake_gps_message, GPS_L1_FREQUENCY);
+        }
+    }
+
+    fn spread_malware(
+        &self,
+        device_map: &mut IdToDeviceMap,
+        message_queue: &mut MessageQueue,
+        current_time: Millisecond
+    ) {
+        let AttackType::MalwareDistribution(malware) = self.attack_type else {
+            return
+        };
+
+        for device in device_map.devices() {
+            if !self.device.transmits_to(device, CONTROL_FREQUENCY) {
+                continue;
+            }
+
+            let malicious_message = Message::new(
+                self.device.id(), 
+                device.id(), 
+                current_time + malware.infection_delay(), 
+                MessageType::Malware(malware)
+            );
+
+            message_queue.add_message(
+                malicious_message,
+                CONTROL_FREQUENCY, 
+            );
+        }
     }
 }
 
