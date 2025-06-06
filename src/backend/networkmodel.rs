@@ -23,8 +23,9 @@ use signalupdate::try_find_best_signal_levels;
 
 pub mod attack;
 pub mod gps;
-pub mod msgproc;
-pub mod signalupdate;
+
+mod msgproc;
+mod signalupdate;
 
 
 fn get_any_device<'a>(
