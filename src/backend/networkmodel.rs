@@ -232,13 +232,14 @@ impl NetworkModel {
     pub fn update(&mut self) {
         self.update_connections_graph();
         self.update_signal_levels();
-        self.reconnect_devices();
+        self.remove_shut_down_devices();
+        self.resend_current_tasks_to_reconnecting_devices();
         self.process_attacks();
         self.process_message_queue();
         self.device_map.handle_infection();
         self.device_map.update_states();
-        self.add_gps_messages_to_queue();
         self.connect_gps_to_all_devices();
+        self.add_gps_messages_to_queue();
      
         self.current_time += ITERATION_TIME;
     }
@@ -271,13 +272,22 @@ impl NetworkModel {
         );
     }
     
-    fn reconnect_devices(&mut self) {
-        self.remove_shut_down_devices();
-
+    fn remove_shut_down_devices(&mut self) {
+        self.device_map.retain(|device_id, device|
+            *device_id == self.command_device_id
+            || device.receives_signal(CONTROL_FREQUENCY)
+            || !matches!(
+                device.signal_loss_response(), 
+                SignalLossResponse::Shutdown
+            )
+        );
+    }
+    
+    fn resend_current_tasks_to_reconnecting_devices(&mut self) {
         for (device_id, device) in &self.device_map {
             if !matches!(device.task(), Task::Reconnect(_)) {
                 continue;
-            };
+            }
 
             let current_task = *self.current_tasks
                 .get(device_id)
@@ -296,18 +306,7 @@ impl NetworkModel {
             );
         }
     }
-    
-    fn remove_shut_down_devices(&mut self) {
-        self.device_map.retain(|device_id, device|
-            *device_id == self.command_device_id
-            || device.receives_signal(CONTROL_FREQUENCY)
-            || !matches!(
-                device.signal_loss_response(), 
-                SignalLossResponse::Shutdown
-            )
-        );
-    }
-    
+     
     fn process_attacks(&mut self) {
         for attacker_device in &self.attacker_devices {
             process_attack(

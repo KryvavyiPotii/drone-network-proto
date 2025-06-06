@@ -101,11 +101,7 @@ impl ConnectionGraph {
 
         match self.topology {
             Topology::Star => 
-                self.create_star(
-                    command_device, 
-                    device_map,
-                    frequency
-                ),
+                self.create_star(command_device, device_map, frequency),
             Topology::Mesh => 
                 self.create_mesh(device_map, frequency),
         }
@@ -117,7 +113,7 @@ impl ConnectionGraph {
         device_map: &IdToDeviceMap,
         frequency: Megahertz
     ) {
-        for (device_id, device) in device_map.iter() {
+        for (device_id, device) in device_map {
             // Loops are prohibited. Otherwise, shortest path algorithms will 
             // not function properly.
             if *device_id == central_device.id() {
@@ -148,8 +144,8 @@ impl ConnectionGraph {
         device_map: &IdToDeviceMap,
         frequency: Megahertz
     ) {
-        for (tx_id, tx) in device_map.iter() {
-            for (rx_id, rx) in device_map.iter() {
+        for (tx_id, tx) in device_map {
+            for (rx_id, rx) in device_map {
                 // Loops are prohibited. Otherwise, shortest path algorithms 
                 // will not function properly.
                 if tx_id == rx_id {
