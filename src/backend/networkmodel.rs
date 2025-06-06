@@ -15,8 +15,8 @@ use attack::{
 };
 use gps::GPS;
 use msgproc::{
-    MessageProcessError, send_message, set_delay_map_for_message, try_add_task, 
-    try_finish_message, try_preprocess_message
+    MessageProcessError, send_message, try_add_task, try_finish_message, 
+    try_preprocess_message
 };
 use signalupdate::get_best_signal_levels_for_controlled_devices;
 
@@ -350,14 +350,14 @@ impl NetworkModel {
                     continue;
                 };
                 
-                set_delay_map_for_message(
-                    message,
-                    delay_map,
+                let new_delay_map = self.connections.delay_map(
                     source_device,
+                    message.destination_id(),
                     &self.device_map,
-                    &self.connections,
                     self.delay_multiplier
                 );
+
+                delay_map.clone_from(&new_delay_map);
             }
             
             let receiver_ids = send_message(

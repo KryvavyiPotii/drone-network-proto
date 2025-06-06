@@ -1,10 +1,9 @@
 use thiserror::Error;
 
-use crate::backend::connections::ConnectionGraph;
 use crate::backend::device::{
     Device, DeviceId, IdToDelayMap, IdToDeviceMap, IdToTaskMap, BROADCAST_ID
 };
-use crate::backend::mathphysics::{delay_to, Megahertz, Millisecond, Position};
+use crate::backend::mathphysics::{Megahertz, Millisecond};
 use crate::backend::message::{Message, MessageType};
 
 
@@ -119,124 +118,6 @@ fn broadcast_message(
     }
 
     receiver_ids
-}
-
-pub fn set_delay_map_for_message(
-    message: &Message,
-    delay_map: &mut IdToDelayMap,
-    source_device: &Device,
-    device_map: &IdToDeviceMap,
-    connections: &ConnectionGraph,
-    delay_multiplier: f32,
-) {
-    let source_id = source_device.id();
-
-    let message_delay_map = if connections.contains_device(source_id) {
-        delay_map_from_device_inside_network(
-            message, 
-            source_id, 
-            connections,
-            delay_multiplier
-        )
-    } else {
-        delay_map_from_device_outside_network(
-            message, 
-            source_device, 
-            device_map,
-            connections,
-            delay_multiplier
-        )        
-    };
-    
-    delay_map.clone_from(&message_delay_map);
-}
-
-fn delay_map_from_device_inside_network(
-    message: &Message,
-    source_id: DeviceId,
-    connections: &ConnectionGraph,
-    delay_multiplier: f32,
-) -> IdToDelayMap {
-    let destination_id = message.destination_id();
-
-    if destination_id == BROADCAST_ID {
-        return connections.delays(source_id, delay_multiplier);
-    }
-
-    let delay = connections.delay_to(
-        source_id, 
-        destination_id, 
-        delay_multiplier
-    );
-
-    IdToDelayMap::from([(destination_id, delay)])
-}
-
-fn delay_map_from_device_outside_network(
-    message: &Message,
-    source_device: &Device,
-    device_map: &IdToDeviceMap,
-    connections: &ConnectionGraph,
-    delay_multiplier: f32,
-) -> IdToDelayMap {
-    let destination_id = message.destination_id();
-
-    if destination_id == BROADCAST_ID {
-        return broadcast_delay_map_from_device_outside_network(
-            destination_id, 
-            source_device, 
-            device_map, 
-            connections, 
-            delay_multiplier
-        );
-    } 
-
-    unicast_delay_map_from_device_outside_network(
-        destination_id, 
-        source_device, 
-        device_map, 
-        delay_multiplier
-    )
-}
-
-fn broadcast_delay_map_from_device_outside_network(
-    destination_id: DeviceId,
-    source_device: &Device,
-    device_map: &IdToDeviceMap,
-    connections: &ConnectionGraph,
-    delay_multiplier: f32,
-) -> IdToDelayMap {
-    connections 
-        .devices()
-        .filter_map(|device_id| {
-            let destination_device = device_map.get(&destination_id)?; 
-            
-            let delay = delay_to(
-                source_device.distance_to(destination_device), 
-                delay_multiplier
-            );
-
-            Some((device_id, delay))
-        })
-        .collect()
-}
-
-fn unicast_delay_map_from_device_outside_network(
-    destination_id: DeviceId,
-    source_device: &Device,
-    device_map: &IdToDeviceMap,
-    delay_multiplier: f32,
-) -> IdToDelayMap {
-    let Some(destination_device) = device_map.get(&destination_id) else {
-        return IdToDelayMap::new();
-    };
-    
-    let delay = delay_to(
-        source_device.distance_to(destination_device), 
-        delay_multiplier
-    );
-
-    IdToDelayMap::from([(destination_id, delay)])
 }
 
 /// # Errors

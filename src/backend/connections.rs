@@ -10,8 +10,10 @@ use rustworkx_core::centrality::betweenness_centrality;
 use rustworkx_core::dictmap::DictMap;
 use rustworkx_core::shortest_path::{astar, dijkstra};
 
-use super::device::{Device, DeviceId, IdToDelayMap, IdToDeviceMap};
-use super::mathphysics::{delay_to, Megahertz, Meter, Millisecond, Position};
+use super::device::{
+    Device, DeviceId, IdToDelayMap, IdToDeviceMap, BROADCAST_ID
+};
+use super::mathphysics::{delay_to, Megahertz, Meter, Position};
 use super::malware::Malware;
 
 use percolation::{
@@ -39,6 +41,25 @@ pub enum ShortestPathError {
     PathTooShort
 }
     
+
+fn unicast_delay_map_from_outside_network(
+    destination_id: DeviceId,
+    source_device: &Device,
+    device_map: &IdToDeviceMap,
+    delay_multiplier: f32,
+) -> IdToDelayMap {
+    let Some(destination_device) = device_map.get(&destination_id) else {
+        return IdToDelayMap::new();
+    };
+    
+    let delay = delay_to(
+        source_device.distance_to(destination_device), 
+        delay_multiplier
+    );
+
+    IdToDelayMap::from([(destination_id, delay)])
+}
+
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum Topology {
@@ -163,13 +184,70 @@ impl ConnectionGraph {
             }
         }
     }
+    
+    pub fn delay_map(
+        &self,
+        source_device: &Device,
+        destination_id: DeviceId,
+        device_map: &IdToDeviceMap,
+        delay_multiplier: f32,
+    ) -> IdToDelayMap {
+        if self.graph_map.contains_node(source_device.id()) {
+            self.delay_map_from_inside_network(
+                source_device.id(), 
+                destination_id,
+                delay_multiplier
+            )
+        } else {
+            self.delay_map_from_outside_network(
+                source_device, 
+                destination_id,
+                device_map,
+                delay_multiplier
+            )        
+        }
+    }
+
+    fn delay_map_from_inside_network(
+        &self,
+        source: DeviceId,
+        destination: DeviceId,
+        delay_multiplier: f32,
+    ) -> IdToDelayMap {
+        if destination == BROADCAST_ID {
+            return self.broadcast_delay_map_from_inside_network(
+                source, 
+                delay_multiplier
+            );
+        }
+
+        self.unicast_delay_map_from_inside_network(
+            source, 
+            destination, 
+            delay_multiplier
+        )
+    }
+    
+    fn unicast_delay_map_from_inside_network(
+        &self, 
+        source: DeviceId,
+        destination: DeviceId,
+        delay_multiplier: f32
+    ) -> IdToDelayMap {
+        let distance_map = self
+            .dijkstra(source, Some(destination))
+            .unwrap();
+        
+        let distance = distance_map
+            .get_item(destination)
+            .unwrap();
+
+        IdToDelayMap::from([
+            (destination, delay_to(*distance, delay_multiplier))
+        ])
+    }
  
-    /// # Panics
-    /// 
-    /// Will panic if `rustworkx_core::shortest_path::dijkstra` becomes 
-    /// fallible.
-    #[must_use]
-    pub fn delays(
+    fn broadcast_delay_map_from_inside_network(
         &self, 
         source: DeviceId,
         delay_multiplier: f32
@@ -185,27 +263,51 @@ impl ConnectionGraph {
             })
             .collect()
     }
-     
-    /// # Panics
-    /// 
-    /// Will panic if `rustworkx_core::shortest_path::dijkstra` becomes 
-    /// fallible.
-    #[must_use]
-    pub fn delay_to(
-        &self, 
-        source: DeviceId,
-        destination: DeviceId,
-        delay_multiplier: f32
-    ) -> Millisecond {
-        let distance_map = self
-            .dijkstra(source, Some(destination))
-            .unwrap();
-        
-        let distance = distance_map
-            .get_item(destination)
-            .unwrap();
 
-        delay_to(*distance, delay_multiplier)
+    fn delay_map_from_outside_network(
+        &self,
+        source_device: &Device,
+        destination_id: DeviceId,
+        device_map: &IdToDeviceMap,
+        delay_multiplier: f32,
+    ) -> IdToDelayMap {
+        if destination_id == BROADCAST_ID {
+            return self.broadcast_delay_map_from_outside_network(
+                destination_id, 
+                source_device, 
+                device_map, 
+                delay_multiplier
+            );
+        } 
+
+        unicast_delay_map_from_outside_network(
+            destination_id, 
+            source_device, 
+            device_map, 
+            delay_multiplier
+        )
+    }
+
+    fn broadcast_delay_map_from_outside_network(
+        &self,
+        destination_id: DeviceId,
+        source_device: &Device,
+        device_map: &IdToDeviceMap,
+        delay_multiplier: f32,
+    ) -> IdToDelayMap {
+        self.graph_map
+            .nodes()
+            .filter_map(|device_id| {
+                let destination_device = device_map.get(&destination_id)?; 
+                
+                let delay = delay_to(
+                    source_device.distance_to(destination_device), 
+                    delay_multiplier
+                );
+
+                Some((device_id, delay))
+            })
+            .collect()
     }
 
     // Gives shortest distance to a device by distance between devices.
@@ -989,7 +1091,12 @@ mod tests {
             (command_center_id, 0),
             (drone_id, 0)
         ]);
-        let no_delays = connections.delays(command_center_id, 0.0);
+        let no_delays = connections.delay_map(
+            device_map.get(&command_center_id).unwrap(), 
+            BROADCAST_ID,
+            &device_map,
+            0.0
+        );
 
         assert!(expected_delays.eq(&no_delays));
 
@@ -997,7 +1104,12 @@ mod tests {
             (command_center_id, 0),
             (drone_id, 250)
         ]);
-        let delays = connections.delays(command_center_id, 1_500_000.0);
+        let delays = connections.delay_map(
+            device_map.get(&command_center_id).unwrap(), 
+            BROADCAST_ID,
+            &device_map,
+            1_500_000.0
+        );
 
         assert!(expected_delays.eq(&delays));
     }
