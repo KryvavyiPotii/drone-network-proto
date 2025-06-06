@@ -4,7 +4,7 @@ use rustworkx_core::distancemap::DistanceMap;
 use thiserror::Error;
 
 use petgraph::Directed;
-use petgraph::graphmap::{GraphMap, Neighbors, Nodes}; 
+use petgraph::graphmap::{GraphMap, Neighbors}; 
 use petgraph::visit::EdgeRef;
 use rustworkx_core::centrality::betweenness_centrality;
 use rustworkx_core::dictmap::DictMap;
@@ -85,25 +85,11 @@ impl ConnectionGraph {
     }
 
     #[must_use]
-    pub fn devices(&self) -> Nodes<'_, DeviceId> {
-        self.graph_map.nodes()
-    }
-
-    #[must_use]
-    pub fn contains_device(&self, node: DeviceId) -> bool {
-        self.graph_map.contains_node(node)
-    }
-
-    #[must_use]
     pub fn neighbors(
         &self, 
         node: DeviceId
     ) -> Neighbors<'_, DeviceId, Directed> {
         self.graph_map.neighbors(node)
-    }
-
-    pub fn clear(&mut self) {
-        self.graph_map.clear();
     }
 
     // Currently, it considers only distances between devices while building the 
@@ -114,7 +100,7 @@ impl ConnectionGraph {
         device_map: &IdToDeviceMap,
         frequency: Megahertz
     ) {
-        self.clear();
+        self.graph_map.clear();
         
         let Some(command_device) = device_map.get(&command_device_id) else {
             return 
