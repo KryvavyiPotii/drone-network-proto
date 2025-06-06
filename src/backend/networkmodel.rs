@@ -229,7 +229,7 @@ impl NetworkModel {
 
     fn set_initial_state(&mut self) {
         self.connect_gps_to_all_devices();
-        self.send_gps_messages();
+        self.add_gps_messages_to_queue();
         self.update_connections_graph();
         self.update_signal_levels();
     }
@@ -242,7 +242,7 @@ impl NetworkModel {
         self.process_message_queue();
         self.device_map.handle_infection();
         self.device_map.update_states();
-        self.send_gps_messages();
+        self.add_gps_messages_to_queue();
         self.connect_gps_to_all_devices();
      
         self.current_time += ITERATION_TIME;
@@ -404,10 +404,10 @@ impl NetworkModel {
         self.gps.connect_gps_to_all_devices(&mut self.device_map);
     }
 
-    fn send_gps_messages(&mut self) {
-        self.gps.send_gps_messages(
-            &self.device_map, 
+    fn add_gps_messages_to_queue(&mut self) {
+        self.gps.add_gps_messages_to_queue(
             &mut self.message_queue, 
+            &self.device_map, 
             self.current_time,
         );
     }

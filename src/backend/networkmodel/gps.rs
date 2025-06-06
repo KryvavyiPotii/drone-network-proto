@@ -38,10 +38,10 @@ impl GPS {
         }
     }
 
-    pub fn send_gps_messages(
+    pub fn add_gps_messages_to_queue(
         &self,
-        device_map: &IdToDeviceMap,
         message_queue: &mut MessageQueue,
+        device_map: &IdToDeviceMap,
         current_time: Millisecond,
     ) {
         for (device_id, device) in device_map {
@@ -249,9 +249,9 @@ mod tests {
 
         assert_eq!(message_queue.len(), 2);
         
-        gps.send_gps_messages(
-            &device_map, 
+        gps.add_gps_messages_to_queue(
             &mut message_queue, 
+            &device_map, 
             unimportant_time,
         );
         

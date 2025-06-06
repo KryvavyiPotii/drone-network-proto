@@ -46,7 +46,7 @@ const DEFAULT_SIM_TIME: &str     = "15000";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.15.1")
+        .version("0.15.2")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
