@@ -136,21 +136,19 @@ pub fn try_add_task(
         return Err(TaskAddError::WrongMessageType);
     };
 
-    let destination_id = message.destination_id();
-    if destination_id != BROADCAST_ID {
-        current_tasks.insert(destination_id, task);
+    if message.destination_id() == BROADCAST_ID {
+        for device_id in device_map.ids() {
+            current_tasks.insert(*device_id, task);
+        }    
+        
         return Ok(());
     }
 
-    for device_id in device_map.ids() {
-        current_tasks.insert(*device_id, task);
-    }    
+    current_tasks.insert(message.destination_id(), task);
 
     Ok(())
 }
 
-// We assume that the message processing is finished if it was processed by 
-// the device with the longest delay.
 /// # Errors
 ///
 /// Will return `Err` if message execution time is greater than current time.
@@ -164,6 +162,8 @@ pub fn try_finish_message(
         .max()
         .unwrap_or(&0);
 
+    // We assume that the message processing is finished if it was processed by 
+    // a device with the longest delay.
     if current_time < message.time() + longest_delay {
         return Err(MessageProcessError::TooEarly)
     }
