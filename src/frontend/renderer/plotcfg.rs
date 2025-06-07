@@ -3,63 +3,65 @@ use std::ops::Range;
 use crate::backend::mathphysics::{Meter, Point3D};
 
 
-pub const PLOT_MARGIN: u32 = 20;
+pub const PLOT_MARGIN: Pixel = 20;
 
-const METERS_TO_PIXELS_SCALE_COEF: f64 = 400.0;
+const METERS_TO_PIXELS_SCALE_COEF: PlottersUnit = 400.0;
 
 
-pub fn font_size(plot_resolution: PlotResolution) -> u32 {
+pub type Pixel         = u32;
+pub type PlottersUnit  = f64;
+
+
+#[must_use]
+pub fn font_size(plot_resolution: PlotResolution) -> Pixel {
     plot_resolution.width / 15
 }
 
+#[must_use]
 #[allow(clippy::cast_sign_loss)]
 #[allow(clippy::cast_possible_truncation)]
 pub fn meters_to_pixels(
     value_in_meters: Meter,
     plot_resolution: PlotResolution,
-) -> u32 {
+) -> Pixel {
     // This value is very rough because it does not 
     // consider the perspective.
-    let coef = f64::from(plot_resolution.height()) 
+    let coef = PlottersUnit::from(plot_resolution.height()) 
         / METERS_TO_PIXELS_SCALE_COEF;
 
-    (f64::from(value_in_meters) * coef).round() as u32 
-}
-
-pub fn plotters_point_from_point3d(point: &Point3D) -> (f64, f64, f64) {
-    (    
-        f64::from(point.x), 
-        f64::from(point.z), 
-        f64::from(point.y), 
-    )
+    (PlottersUnit::from(value_in_meters) * coef).round() as Pixel 
 }
 
 
 #[derive(Debug, Clone)]
 pub struct Axes3DRanges {
-    x: Range<f64>,
-    y: Range<f64>,
-    z: Range<f64>
+    x: Range<PlottersUnit>,
+    y: Range<PlottersUnit>,
+    z: Range<PlottersUnit>
 }
 
 impl Axes3DRanges {
     #[must_use]
-    pub fn new(x: Range<f64>, y: Range<f64>, z: Range<f64>) -> Self {
+    pub fn new(
+        x: Range<PlottersUnit>, 
+        y: Range<PlottersUnit>, 
+        z: Range<PlottersUnit>
+    ) -> Self {
         Self { x, y, z }
     }
 
     #[must_use]
-    pub fn x(&self) -> Range<f64> {
+    pub fn x(&self) -> Range<PlottersUnit> {
         self.x.clone()
     }
     
     #[must_use]
-    pub fn y(&self) -> Range<f64> {
+    pub fn y(&self) -> Range<PlottersUnit> {
         self.y.clone()
     }
     
     #[must_use]
-    pub fn z(&self) -> Range<f64> {
+    pub fn z(&self) -> Range<PlottersUnit> {
         self.z.clone()
     }
 }
@@ -76,32 +78,66 @@ impl Default for Axes3DRanges {
 
 
 #[derive(Clone, Copy)]
+pub struct PlottersPoint3D((PlottersUnit, PlottersUnit, PlottersUnit));
+
+impl From<Point3D> for PlottersPoint3D {
+    fn from(point3d: Point3D) -> Self {
+        let coordinates = (    
+            PlottersUnit::from(point3d.x), 
+            PlottersUnit::from(point3d.z), 
+            PlottersUnit::from(point3d.y), 
+        );
+
+        Self(coordinates)
+    }
+}
+
+impl From<&Point3D> for PlottersPoint3D {
+    fn from(point3d: &Point3D) -> Self {
+        let coordinates = (    
+            PlottersUnit::from(point3d.x), 
+            PlottersUnit::from(point3d.z), 
+            PlottersUnit::from(point3d.y), 
+        );
+
+        Self(coordinates)
+    }
+}
+
+impl From<PlottersPoint3D> for (PlottersUnit, PlottersUnit, PlottersUnit) {
+    fn from(plotters_point3d: PlottersPoint3D) -> Self {
+        plotters_point3d.0 
+    }
+}
+
+
+#[derive(Clone, Copy)]
 pub struct PlotResolution {
-    width: u32,
-    height: u32
+    width: Pixel,
+    height: Pixel
 }
 
 impl PlotResolution {
     #[must_use]
     pub fn new(
-        width: u32,
-        height: u32
+        width: Pixel,
+        height: Pixel
     ) -> Self {
         Self { width, height }
     }
 
     #[must_use]
-    pub fn width(&self) -> u32 {
+    pub fn width(&self) -> Pixel {
         self.width
     }
     
     #[must_use]
-    pub fn height(&self) -> u32 {
+    pub fn height(&self) -> Pixel {
         self.height
     }
 }
 
-impl From<PlotResolution> for (u32, u32) {
+impl From<PlotResolution> for (Pixel, Pixel) {
     fn from(plot_resolution: PlotResolution) -> Self {
         (plot_resolution.width(), plot_resolution.height())
     }
@@ -118,23 +154,23 @@ pub enum DeviceColoring {
 
 #[derive(Clone, Copy)]
 pub struct CameraAngle {
-    pitch: f64,
-    yaw: f64
+    pitch: PlottersUnit,
+    yaw: PlottersUnit
 }
 
 impl CameraAngle {
     #[must_use]
-    pub fn new(pitch: f64, yaw: f64) -> Self {
+    pub fn new(pitch: PlottersUnit, yaw: PlottersUnit) -> Self {
         Self { pitch, yaw }
     }
     
     #[must_use]
-    pub fn pitch(&self) -> f64 {
+    pub fn pitch(&self) -> PlottersUnit {
         self.pitch
     }
     
     #[must_use]
-    pub fn yaw(&self) -> f64 {
+    pub fn yaw(&self) -> PlottersUnit {
         self.yaw
     }
 }

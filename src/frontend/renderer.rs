@@ -5,21 +5,20 @@ use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
 use thiserror::Error;
 
-use crate::backend::{CONTROL_FREQUENCY, ITERATION_TIME};
+use crate::backend::ITERATION_TIME;
 use crate::backend::mathphysics::Point3D;
 use crate::backend::message::Task;
 use crate::backend::networkmodel::NetworkModel;
 use crate::backend::networkmodel::attack::AttackerDevice;
-use crate::backend::signal::GPS_L1_FREQUENCY;
 
 use primitives::{
-    attacker_device_primitive, command_device_primitive, destination_primitive, 
-    device_primitive
+    attacker_device_primitive_on_all_frequencies, command_device_primitive, 
+    destination_primitive, device_primitive
 };
 
 pub use plotcfg::{
-    Axes3DRanges, CameraAngle, DeviceColoring, PlotResolution, meters_to_pixels, 
-    plotters_point_from_point3d
+    Axes3DRanges, CameraAngle, DeviceColoring, Pixel, PlottersUnit, 
+    PlottersPoint3D, PlotResolution, meters_to_pixels 
 };
 
 use plotcfg::{font_size, PLOT_MARGIN};
@@ -166,7 +165,7 @@ impl<'a> PlottersRenderer<'a> {
             );
         }
 
-        let mut chart = chart_builder
+        let chart = chart_builder
             .margin(PLOT_MARGIN)
             .build_cartesian_3d(
                 self.axes_ranges.x(),
@@ -174,13 +173,6 @@ impl<'a> PlottersRenderer<'a> {
                 self.axes_ranges.z(),
             )
             .expect("Failed to create a chart");
-
-        chart
-            .with_projection(|mut p| {
-                p.pitch = self.camera_angle.pitch();
-                p.yaw = self.camera_angle.yaw();
-                p.into_matrix()
-            });
 
         chart
     }
@@ -206,6 +198,11 @@ impl<'a> PlottersRenderer<'a> {
 
     fn draw_chart(&self, chart_context: &mut PlottersChartContext<'a>) {
         chart_context 
+            .with_projection(|mut p| {
+                p.pitch = self.camera_angle.pitch();
+                p.yaw = self.camera_angle.yaw();
+                p.into_matrix()
+            })
             .configure_axes()
             .axis_panel_style(GREY.mix(0.2))
             .label_style(("sans-serif", self.font_size / 2))
@@ -279,30 +276,17 @@ impl<'a> PlottersRenderer<'a> {
         attacker_devices: &[AttackerDevice],
         chart_context: &mut PlottersChartContext<'a>
     ) {
-        let control_attacker_device_primitives = attacker_devices
+        let attacker_device_primitives = attacker_devices
             .iter()
-            .map(|attacker_device| {
-                attacker_device_primitive(
+            .flat_map(|attacker_device| {
+                attacker_device_primitive_on_all_frequencies(
                     attacker_device, 
-                    CONTROL_FREQUENCY, 
-                    self.plot_resolution
-                )
-            });
-        let gps_attacker_device_primitives = attacker_devices
-            .iter()
-            .map(|attacker_device| {
-                attacker_device_primitive(
-                    attacker_device, 
-                    GPS_L1_FREQUENCY, 
                     self.plot_resolution
                 )
             });
 
         chart_context
-            .draw_series(control_attacker_device_primitives)
+            .draw_series(attacker_device_primitives)
             .expect("Failed to draw control EWDs");
-        chart_context
-            .draw_series(gps_attacker_device_primitives)
-            .expect("Failed to draw GPS EWDs");
     }
 }

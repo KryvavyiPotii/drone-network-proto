@@ -5,7 +5,7 @@ use crate::backend::device::systems::TRXSystemType;
 use crate::backend::mathphysics::Millisecond;
 
 use super::examples;
-use super::renderer::PlotResolution;
+use super::renderer::{Pixel, PlotResolution};
 
 
 const ARG_DELAY_MULTIPLIER: &str = "delay multiplier";
@@ -47,7 +47,7 @@ const DEFAULT_SIM_TIME: &str     = "15000";
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.15.3")
+        .version("0.15.4")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
@@ -60,7 +60,7 @@ pub fn cli() {
             Arg::new(ARG_PLOT_WIDTH)
                 .long("width")
                 .requires(ARG_PLOT_HEIGHT)
-                .value_parser(clap::value_parser!(u32))
+                .value_parser(clap::value_parser!(Pixel))
                 .default_value(DEFAULT_PLOT_WIDTH)
                 .help("Set the plot width")
         )
@@ -68,7 +68,7 @@ pub fn cli() {
             Arg::new(ARG_PLOT_HEIGHT)
                 .long("height")
                 .requires(ARG_PLOT_WIDTH)
-                .value_parser(clap::value_parser!(u32))
+                .value_parser(clap::value_parser!(Pixel))
                 .default_value(DEFAULT_PLOT_HEIGHT)
                 .help("Set the plot height")
         )
@@ -176,10 +176,10 @@ pub fn cli() {
 
 fn handle_arguments(matches: &ArgMatches) {
     let plot_width = *matches
-        .get_one::<u32>(ARG_PLOT_WIDTH)
+        .get_one::<Pixel>(ARG_PLOT_WIDTH)
         .unwrap();
     let plot_height = *matches
-        .get_one::<u32>(ARG_PLOT_HEIGHT)
+        .get_one::<Pixel>(ARG_PLOT_HEIGHT)
         .unwrap();
     let plot_resolution = PlotResolution::new(plot_width, plot_height);
     let simulation_time = *matches
