@@ -802,7 +802,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network_model.command_device().is_infected());
+        assert!(
+            !network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
 
         network_model.update();
         
@@ -818,7 +823,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network_model.command_device().is_infected());
+        assert!(
+            !network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
 
         wait_for_infection(
             &mut network_model, 
@@ -837,7 +847,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(network_model.command_device().is_infected());
+        assert!(
+            network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
 
         wait_for_infection(
             &mut network_model, 
@@ -856,7 +871,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(network_model.command_device().is_infected());
+        assert!(
+            network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
     }
 
     #[test]
@@ -937,7 +957,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network_model.command_device().is_infected());
+        assert!(
+            !network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
 
         network_model.update();
         
@@ -953,7 +978,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network_model.command_device().is_infected());
+        assert!(
+            !network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
 
         wait_for_infection(
             &mut network_model, 
@@ -972,7 +1002,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network_model.command_device().is_infected());
+        assert!(
+            !network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
 
         wait_for_infection(
             &mut network_model, 
@@ -991,7 +1026,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network_model.command_device().is_infected());
+        assert!(
+            !network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
     }
 
 
@@ -1101,7 +1141,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network_model.command_device().is_infected());
+        assert!(
+            !network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
 
         network_model.update();       
         
@@ -1129,7 +1174,12 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(!network_model.command_device().is_infected());
+        assert!(
+            !network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
 
         wait_for_infection(
             &mut network_model, 
@@ -1160,6 +1210,11 @@ mod tests {
                 .unwrap()
                 .is_infected()
         );
-        assert!(network_model.command_device().is_infected());
+        assert!(
+            network_model
+                .command_device()
+                .expect("Missing command device")
+                .is_infected()
+        );
     }
 }
