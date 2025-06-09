@@ -12,14 +12,10 @@ use crate::backend::message::MessageCost;
 
 use super::{
     GREEN_SIGNAL_STRENGTH, MAX_BLACK_SIGNAL_STRENGTH, MAX_RED_SIGNAL_STRENGTH, 
-    MAX_YELLOW_SIGNAL_STRENGTH, NO_SIGNAL_STRENGTH, SignalArea, SignalStrength,
-    SIGNAL_STRENGTH_SCALING,
+    MAX_YELLOW_SIGNAL_STRENGTH, NO_SIGNAL_STRENGTH, SignalArea, SignalStrength, 
+    SIGNAL_STRENGTH_SCALING, 
 };
 
-
-pub const RED_SIGNAL_ZONE_COEFFICIENT: f32    = 0.875;
-pub const YELLOW_SIGNAL_ZONE_COEFFICIENT: f32 = 0.8;
-pub const GREEN_SIGNAL_ZONE_COEFFICIENT: f32  = 0.5;
 
 pub const NO_SIGNAL_LEVEL: SignalLevel     =
     SignalLevel(SignalLevelInner::Black(NO_SIGNAL_STRENGTH));
@@ -36,6 +32,9 @@ const CHANGE_SIGNAL_LEVEL_FROM_GREEN_PROBABILITY: f64  = 0.95;
 const CHANGE_SIGNAL_LEVEL_FROM_YELLOW_PROBABILITY: f64 = 0.70;
 const CHANGE_SIGNAL_LEVEL_FROM_RED_PROBABILITY: f64    = 0.50;
 const CHANGE_SIGNAL_LEVEL_FROM_BLACK_PROBABILITY: f64  = 0.0;
+
+const YELLOW_SIGNAL_ZONE_COEFFICIENT: f32 = 0.2;
+const GREEN_SIGNAL_ZONE_COEFFICIENT: f32  = 0.1;
 
 
 #[must_use]
@@ -334,6 +333,8 @@ impl From<SignalStrength> for SignalLevelInner {
 
 #[cfg(test)]
 mod tests {
+    use crate::backend::signal::RED_SIGNAL_ZONE_COEFFICIENT;
+
     use super::*;
     
 

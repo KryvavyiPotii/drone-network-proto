@@ -1,191 +1,41 @@
-use std::collections::HashMap;
-use std::ops::Range;
-
-use rand::prelude::*;
-
 use crate::backend::CONTROL_FREQUENCY;
 use crate::backend::connections::Topology;
 use crate::backend::device::{
     Device, DeviceBuilder, DeviceId, SignalLossResponse, BROADCAST_ID, 
-    MAX_DRONE_SPEED 
 };
-use crate::backend::device::systems::{
-    MovementSystem, PowerSystem, TRXModule, TRXSystem, TRXSystemType
-};
+use crate::backend::device::systems::TRXSystemType;
 use crate::backend::malware::{Malware, MalwareType};
-use crate::backend::mathphysics::{Megahertz, Meter, Point3D, PowerUnit};
+use crate::backend::mathphysics::{Megahertz, Point3D};
 use crate::backend::message::{Task, Message, MessageType};
 use crate::backend::networkmodel::NetworkModelBuilder; 
 use crate::backend::networkmodel::attack::{AttackType, AttackerDevice};
-use crate::backend::networkmodel::gps::GPS;
 use crate::backend::signal::{
-    SignalArea, SignalLevel, GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, 
-    RED_SIGNAL_LEVEL
+    GPS_L1_FREQUENCY, GREEN_SIGNAL_LEVEL, RED_SIGNAL_LEVEL
 };
 
-use super::cli::Config;
+use super::{MALWARE_INFECTION_DELAY, MALWARE_SPREADS};
+use super::cli::GeneralConfig;
 use super::player::ModelPlayer;
-use super::renderer::{Axes3DRanges, CameraAngle, DeviceColoring, PlottersRenderer};
-
-
-const BIG_SIGNAL_STRENGTH_VALUE: f32 = 100_000.0;
-
-const DEVICE_MAX_POWER: PowerUnit = 10_000;
-const GPS_TX_RADIUS: Meter        = 1_000.0;
-
-const DEFAULT_GPS_POSITION_IN_METERS: Point3D = Point3D { 
-    x: 0.0, 
-    y: 0.0, 
-    z: 200.0
+use super::renderer::{
+    Axes3DRanges, CameraAngle, DeviceColoring, PlottersRenderer
 };
+
+pub use devsetup::DEVICE_MAX_POWER;
+
+use devsetup::{
+    NetworkPosition, cc_trx_system, create_drone_vec, default_gps, 
+    device_movement_system, device_power_system, drone_trx_system, 
+    ewd_trx_system, generate_drone_positions, generate_drone_vulnerabilities
+};
+
+
+mod devsetup;
+
 
 const NETWORK_ORIGIN: Point3D          = Point3D { x: 150.3, y: 90.6, z: 25.5 };
 const DRONE_DESTINATION: Point3D       = Point3D { x: 0.0, y: 0.0, z: 0.0 };
 const COMMAND_CENTER_POSITION: Point3D = Point3D { x: 200.0, y: 100.0, z: 0.0 };
 
-const VULNERABILITY_PROBABILITY: f64 = 1.0;
-
-
-fn cc_trx_system(
-    trx_system_type: TRXSystemType, 
-    tx_control_area_radius: Meter
-) -> TRXSystem {
-    let tx_control_area = SignalArea::build(tx_control_area_radius)
-        .unwrap();
-
-    let max_tx_signal_levels = HashMap::from([(
-        CONTROL_FREQUENCY, 
-        SignalLevel::from(BIG_SIGNAL_STRENGTH_VALUE)
-    )]);
-    let tx_signal_levels = HashMap::from([(
-        CONTROL_FREQUENCY,
-        SignalLevel::from_area(tx_control_area, CONTROL_FREQUENCY)
-    )]);
-
-    let tx_module = TRXModule::build(
-        max_tx_signal_levels,
-        tx_signal_levels
-    ).unwrap();
-    let rx_module = tx_module.clone();
-
-    TRXSystem::new( 
-        trx_system_type,
-        tx_module, 
-        rx_module
-    )
-}
-
-fn drone_trx_system(
-    trx_system_type: TRXSystemType, 
-    tx_control_area_radius: Meter,
-    max_gps_rx_signal_level: SignalLevel
-) -> TRXSystem {
-    let tx_control_area = SignalArea::build(tx_control_area_radius)
-        .unwrap();
-    let max_tx_control_signal_level = SignalLevel::from_area(
-        tx_control_area, 
-        CONTROL_FREQUENCY
-    );
-
-    let max_tx_signal_levels = HashMap::from([
-        (CONTROL_FREQUENCY, max_tx_control_signal_level),
-    ]);
-    let max_rx_signal_levels = HashMap::from([
-        (CONTROL_FREQUENCY, GREEN_SIGNAL_LEVEL),
-        (GPS_L1_FREQUENCY, max_gps_rx_signal_level)
-    ]);
-
-    let tx_module = TRXModule::build(
-        max_tx_signal_levels,
-        HashMap::new()
-    ).unwrap();
-    let rx_module = TRXModule::build(
-        max_rx_signal_levels,
-        HashMap::new()
-    ).unwrap();
-
-    TRXSystem::new(
-        trx_system_type,
-        tx_module, 
-        rx_module
-    )
-}
-
-fn ewd_trx_system(
-    trx_system_type: TRXSystemType,
-    frequency: Megahertz,
-    suppression_area_radius: Meter
-) -> TRXSystem {
-    let suppression_area = SignalArea::build(suppression_area_radius)
-        .unwrap();
-    let suppression_signal_level = SignalLevel::from_area(
-        suppression_area, 
-        frequency
-    );
-
-    let max_tx_signal_levels = HashMap::from([
-        (frequency, suppression_signal_level)
-    ]);
-    let tx_signal_levels = max_tx_signal_levels.clone();
-
-    let tx_module = TRXModule::build(
-        max_tx_signal_levels,
-        tx_signal_levels
-    ).unwrap();
-
-    TRXSystem::new( 
-        trx_system_type,
-        tx_module, 
-        TRXModule::default()
-    )
-}
-
-fn gps_tx_module() -> TRXModule {
-    let frequency = GPS_L1_FREQUENCY;
-    
-    let max_tx_signal_levels = HashMap::from([
-        (frequency, SignalLevel::from(BIG_SIGNAL_STRENGTH_VALUE))
-    ]);
-    let tx_signal_levels = HashMap::from([(
-        frequency, 
-        SignalLevel::from_area(
-            SignalArea::build(GPS_TX_RADIUS).unwrap(), 
-            frequency
-        )
-    )]);
-
-    TRXModule::build(
-        max_tx_signal_levels,
-        tx_signal_levels,
-    ).unwrap()
-}
-
-fn default_gps(trx_system_type: TRXSystemType) -> GPS {
-    let trx_system = TRXSystem::new( 
-        trx_system_type,
-        gps_tx_module(),
-        TRXModule::default()
-    );
-
-    let device = DeviceBuilder::new()
-        .set_real_position(DEFAULT_GPS_POSITION_IN_METERS)
-        .set_signal_loss_response(SignalLossResponse::Ignore)
-        .set_power_system(device_power_system())
-        .set_trx_system(trx_system)
-        .build();
-
-    GPS::new(device, GPS_L1_FREQUENCY)
-}
-
-fn device_power_system() -> PowerSystem {
-    PowerSystem::build(DEVICE_MAX_POWER, DEVICE_MAX_POWER)
-        .unwrap_or_else(|error| panic!("{}", error))
-}
-
-fn device_movement_system() -> MovementSystem {
-    MovementSystem::build(MAX_DRONE_SPEED)
-        .unwrap_or_else(|error| panic!("{}", error))
-}
 
 fn default_movement_scenario(
     command_center_id: DeviceId
@@ -235,12 +85,16 @@ fn default_movement_scenario(
     )
 }
 
-fn derive_filename(config: &Config, text: &str) -> String {
-    let trx_system_part = match config.trx_system_type {
+fn derive_filename(
+    trx_system_type: TRXSystemType, 
+    topology: Topology,
+    text: &str
+) -> String {
+    let trx_system_part = match trx_system_type {
         TRXSystemType::Color    => "col",
         TRXSystemType::Strength => "str",
     };
-    let topology_part = match config.topology {
+    let topology_part = match topology {
         Topology::Mesh => "mesh",
         Topology::Star => "star",
     };
@@ -248,103 +102,206 @@ fn derive_filename(config: &Config, text: &str) -> String {
     format!("{trx_system_part}_{text}_{topology_part}.gif")
 }
 
-fn create_device_vec(
-    command_device: Device,
-    network_position: &NetworkPosition,
-    device_count: u32, 
-    trx_system_type: TRXSystemType,
-    tx_control_area_radius: Meter,
-    max_gps_rx_signal_level: SignalLevel,
-    vulnerabilities: &[Malware]
-) -> Vec<Device> {
-    let mut rng = rand::rng();
-
-    let power_system    = device_power_system();
-    let movement_system = device_movement_system();
-    let trx_system      = drone_trx_system(
-        trx_system_type, 
-        tx_control_area_radius,
-        max_gps_rx_signal_level
-    );
-
-    let mut devices: Vec<Device> = (1..device_count)
-        .map(|_| {
-            let random_offset = Point3D::new(
-                rng.random_range(network_position.x_offset_range.clone()),
-                rng.random_range(network_position.y_offset_range.clone()),
-                rng.random_range(network_position.z_offset_range.clone())
-            );
-            
-            let position = network_position.origin + random_offset;
-
-            let drone_builder = DeviceBuilder::new()
-                .set_real_position(position)
-                .set_power_system(power_system.clone())
-                .set_movement_system(movement_system.clone())
-                .set_trx_system(trx_system.clone())
-                .set_signal_loss_response(SignalLossResponse::Shutdown);
-
-            let drone_builder = if rand::random_bool(
-                VULNERABILITY_PROBABILITY
-            ) {
-                drone_builder.set_vulnerabilities(vulnerabilities)
-            } else {
-                drone_builder
-            };
-
-            drone_builder.build()
-        })
-        .collect();
-
-    devices.insert(0, command_device);
-
-    devices
-}
-
 fn indicator_malware() -> Malware {
     Malware::new(
-        500, 
+        MALWARE_INFECTION_DELAY, 
         MalwareType::Indicator,
-        true,
-    )
-}
-
-fn jamming_malware(jammed_frequency: Megahertz) -> Malware {
-    Malware::new(
-        500, 
-        MalwareType::Jamming(jammed_frequency),
-        true,
+        MALWARE_SPREADS,
     )
 }
 
 
-struct NetworkPosition {
-    origin: Point3D,
-    x_offset_range: Range<f32>,
-    y_offset_range: Range<f32>,
-    z_offset_range: Range<f32>,
+#[derive(Clone, Copy)]
+pub enum Example {
+    CommandDelays,
+    GPSAndControlEWDs,
+    GPSEWD,
+    GPSSpoofing,
+    MalwareInfection,
+    SignalColor,
+    SignalLossResponse,
 }
 
-impl NetworkPosition {
-    #[must_use]
-    fn new(
-        origin: Point3D,
-        x_offset_range: Range<f32>,
-        y_offset_range: Range<f32>,
-        z_offset_range: Range<f32>,
-    ) -> Self {
-        Self { 
-            origin, 
-            x_offset_range,
-            y_offset_range,
-            z_offset_range
-        }
+impl Example {
+    pub fn execute(&self, general_config: &GeneralConfig) {
+        let network_origin = match self {
+            Example::MalwareInfection | Example::SignalColor =>
+                Point3D::new(50.0, 50.0, 0.0),
+            _ => NETWORK_ORIGIN,
+        };
+
+        let network_position = NetworkPosition::new(
+            network_origin,
+            -40.0..40.0,
+            -40.0..40.0,
+            -20.0..20.0,
+        );
+        
+        let drone_positions = generate_drone_positions(
+            general_config.drone_count(), 
+            &network_position
+        );
+        let malware_list = match general_config.malware() {
+            Some(malware) if general_config.display_malware_propagation() =>
+                vec![malware, indicator_malware()],
+            Some(malware) => vec![malware],
+            None          => Vec::new()
+        };
+        let vulnerabilities = generate_drone_vulnerabilities(
+            general_config.drone_count(), 
+            &malware_list
+        );
+
+        let example_function = match self {
+            Self::CommandDelays      => command_delays,
+            Self::GPSAndControlEWDs  => gps_and_control,
+            Self::GPSEWD             => gps_only,
+            Self::GPSSpoofing        => gps_spoofing,
+            Self::MalwareInfection   => malware_infection,
+            Self::SignalColor        => signal_color,
+            Self::SignalLossResponse => signal_loss_response,
+        };
+
+        execute_example_function_by_general_config(
+            example_function,
+            general_config,
+            &drone_positions,
+            &vulnerabilities,
+        ); 
     }
 }
 
 
-pub fn gps_only(config: &Config) {
-    let cc_tx_control_area_radius    = 300.0;
+fn execute_example_function_by_general_config<F>(
+    example_function: F,
+    general_config: &GeneralConfig,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) 
+where
+    F: Fn(&GeneralConfig, TRXSystemType, Topology, &[Point3D], &[Vec<Malware>])
+{
+    match (general_config.trx_system_type(), general_config.topology()) {
+        (Some(trx_system_type), Some(topology)) => 
+            example_function(
+                general_config, 
+                trx_system_type,
+                topology,
+                drone_positions, 
+                vulnerabilities
+            ),
+        (Some(trx_system_type), None) => 
+            execute_example_function_with_all_topologies(
+                example_function, 
+                general_config, 
+                trx_system_type, 
+                drone_positions, 
+                vulnerabilities
+            ),
+        (None, Some(topology)) => 
+            execute_example_function_with_all_trx_system_types(
+                example_function, 
+                general_config, 
+                topology, 
+                drone_positions, 
+                vulnerabilities
+            ),
+        (None, None) =>
+            execute_example_function_with_all_trx_system_types_and_topologies(
+                example_function, 
+                general_config, 
+                drone_positions, 
+                vulnerabilities
+            ),
+    }
+}
+
+fn execute_example_function_with_all_trx_system_types<F>(
+    example_function: F,
+    general_config: &GeneralConfig,
+    topology: Topology,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) 
+where
+    F: Fn(&GeneralConfig, TRXSystemType, Topology, &[Point3D], &[Vec<Malware>])
+{
+    example_function(
+        general_config, 
+        TRXSystemType::Color, 
+        topology,
+        drone_positions, 
+        vulnerabilities
+    );
+    example_function(
+        general_config, 
+        TRXSystemType::Strength, 
+        topology,
+        drone_positions, 
+        vulnerabilities
+    );
+}
+
+fn execute_example_function_with_all_topologies<F>(
+    example_function: F,
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) 
+where
+    F: Fn(&GeneralConfig, TRXSystemType, Topology, &[Point3D], &[Vec<Malware>])
+{
+    example_function(
+        general_config, 
+        trx_system_type,
+        Topology::Star,
+        drone_positions, 
+        vulnerabilities
+    );
+    example_function(
+        general_config, 
+        trx_system_type,
+        Topology::Mesh,
+        drone_positions, 
+        vulnerabilities
+    );
+}
+
+fn execute_example_function_with_all_trx_system_types_and_topologies<F>(
+    example_function: F,
+    general_config: &GeneralConfig,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+)
+where
+    F: Fn(&GeneralConfig, TRXSystemType, Topology, &[Point3D], &[Vec<Malware>])
+{
+    execute_example_function_with_all_trx_system_types(
+        &example_function, 
+        general_config, 
+        Topology::Star, 
+        drone_positions, 
+        vulnerabilities
+    );
+    execute_example_function_with_all_trx_system_types(
+        example_function, 
+        general_config, 
+        Topology::Mesh, 
+        drone_positions, 
+        vulnerabilities
+    );
+}
+
+fn gps_only(
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    topology: Topology,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) {
+    let drone_count = 100;
+    let cc_tx_control_area_radius    = 200.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = RED_SIGNAL_LEVEL; 
     let ewd_suppression_area_radius  = 100.0; 
@@ -354,7 +311,7 @@ pub fn gps_only(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             cc_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 cc_tx_control_area_radius
             )
         )
@@ -362,21 +319,15 @@ pub fn gps_only(config: &Config) {
         .build();
     let command_center_id = command_center.id();
 
-    let network_position = NetworkPosition::new(
-        NETWORK_ORIGIN,
-        -40.0..40.0,
-        -40.0..40.0,
-        -20.0..20.0,
-    );
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        100,
-        config.trx_system_type,
+    let mut devices = create_drone_vec(
+        drone_count,
+        drone_positions,
+        vulnerabilities,
+        trx_system_type,
         drone_tx_control_area_radius, 
         drone_gps_rx_signal_level, 
-        &[]
-    ); 
+    );
+    devices.insert(0, command_center);
     let scenario = vec!(
         (
             CONTROL_FREQUENCY,
@@ -393,7 +344,7 @@ pub fn gps_only(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 GPS_L1_FREQUENCY, 
                 ewd_suppression_area_radius
             )
@@ -407,34 +358,44 @@ pub fn gps_only(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
+        .set_gps(default_gps(trx_system_type))
+        .set_topology(topology)
         .set_scenario(scenario)
-        .set_delay_multiplier(config.delay_multiplier)
+        .set_delay_multiplier(general_config.delay_multiplier())
         .build();
 
-    let output_filename = derive_filename(config, "gps_only");
+    let output_filename = derive_filename(
+        trx_system_type, 
+        topology, 
+        "gps_only"
+    );
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
     let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
+        general_config.plot_caption(),
+        general_config.plot_resolution(),
         Axes3DRanges::default(),
         &drone_colorings,
         camera_angle
     );
 
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
+    let mut model_player = ModelPlayer::new(
+        general_config.simulation_time(),
         vec![drone_network],
         renderer
     );
 
-    simulation.run();
+    model_player.play();
 }
 
-pub fn gps_and_control(config: &Config) {
+pub fn gps_and_control(
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    topology: Topology,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) {
     let cc_tx_control_area_radius           = 300.0;
     let drone_tx_control_area_radius        = 50.0;
     let drone_gps_rx_signal_level           = RED_SIGNAL_LEVEL; 
@@ -446,7 +407,7 @@ pub fn gps_and_control(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             cc_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 cc_tx_control_area_radius
             )
         )
@@ -454,21 +415,15 @@ pub fn gps_and_control(config: &Config) {
         .build();
     let command_center_id = command_center.id();
     
-    let network_position = NetworkPosition::new(
-        NETWORK_ORIGIN,
-        -40.0..40.0,
-        -40.0..40.0,
-        -20.0..20.0,
-    );
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        100, 
-        config.trx_system_type,
+    let mut devices = create_drone_vec(
+        general_config.drone_count(), 
+        drone_positions,
+        vulnerabilities,
+        trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
-        &[]
     ); 
+    devices.insert(0, command_center);
     let scenario = vec!(
         (
             CONTROL_FREQUENCY,
@@ -485,7 +440,7 @@ pub fn gps_and_control(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                config.trx_system_type,
+                trx_system_type,
                 CONTROL_FREQUENCY,
                 control_ewd_suppression_area_radius
             )
@@ -496,7 +451,7 @@ pub fn gps_and_control(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                config.trx_system_type,
+                trx_system_type,
                 GPS_L1_FREQUENCY,
                 gps_ewd_suppression_area_radius
             )
@@ -511,34 +466,44 @@ pub fn gps_and_control(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
+        .set_gps(default_gps(trx_system_type))
+        .set_topology(topology)
         .set_scenario(scenario)
-        .set_delay_multiplier(config.delay_multiplier)
+        .set_delay_multiplier(general_config.delay_multiplier())
         .build();
  
-    let output_filename = derive_filename(config, "gps_and_control"); 
+    let output_filename = derive_filename(
+        trx_system_type,
+        topology, 
+        "gps_and_control"
+    ); 
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
     let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
+        general_config.plot_caption(),
+        general_config.plot_resolution(),
         Axes3DRanges::default(),
         &drone_colorings,
         camera_angle
     );
     
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
+    let mut model_player = ModelPlayer::new(
+        general_config.simulation_time(),
         vec![drone_network],
         renderer
     );
 
-    simulation.run();
+    model_player.play();
 }
 
-pub fn command_delay(config: &Config) {
+pub fn command_delays(
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    topology: Topology,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) {
     let cc_tx_control_area_radius    = 1000.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
@@ -548,7 +513,7 @@ pub fn command_delay(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             cc_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 cc_tx_control_area_radius
             )
         )
@@ -556,31 +521,25 @@ pub fn command_delay(config: &Config) {
         .build();
     let command_center_id = command_center.id();
 
-    let network_position = NetworkPosition::new(
-        NETWORK_ORIGIN,
-        -40.0..40.0,
-        -40.0..40.0,
-        -20.0..20.0,
-    );
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        100, 
-        config.trx_system_type,
+    let mut devices = create_drone_vec(
+        general_config.drone_count(), 
+        drone_positions,
+        vulnerabilities,
+        trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
-        &[]
     ); 
+    devices.insert(0, command_center);
     let scenario = default_movement_scenario(command_center_id); 
 
     let mut drone_networks = Vec::new();
 
-    if config.display_delayless_network {
+    if general_config.display_delayless_network() {
         let delayless_drone_network = NetworkModelBuilder::new()
             .set_command_center_id(command_center_id)
             .set_devices(&devices)
-            .set_gps(default_gps(config.trx_system_type))
-            .set_topology(config.topology)
+            .set_gps(default_gps(trx_system_type))
+            .set_topology(topology)
             .set_scenario(scenario.clone())
             .build();
 
@@ -589,16 +548,20 @@ pub fn command_delay(config: &Config) {
     let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
+        .set_gps(default_gps(trx_system_type))
+        .set_topology(topology)
         .set_scenario(scenario)
-        .set_delay_multiplier(config.delay_multiplier)
+        .set_delay_multiplier(general_config.delay_multiplier())
         .build();
     
     drone_networks.insert(0, drone_network);
 
-    let output_filename = derive_filename(config, "command_delay");
-    let drone_colorings = if config.display_delayless_network {
+    let output_filename = derive_filename(
+        trx_system_type,
+        topology, 
+        "command_delay"
+    );
+    let drone_colorings = if general_config.display_delayless_network() {
         vec![
             DeviceColoring::SingleColor(0, 0, 0),
             DeviceColoring::SingleColor(255, 0, 0)
@@ -609,27 +572,30 @@ pub fn command_delay(config: &Config) {
     let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
+        general_config.plot_caption(),
+        general_config.plot_resolution(),
         Axes3DRanges::default(),
         &drone_colorings,
         camera_angle
     );
 
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
+    let mut model_player = ModelPlayer::new(
+        general_config.simulation_time(),
         drone_networks,
         renderer
     );
 
-    simulation.run();
+    model_player.play();
 }
 
-pub fn signal_color(config: &Config) {
-    let cc_tx_control_area_radius    = match config.trx_system_type {
-        TRXSystemType::Color    => 100.0,
-        TRXSystemType::Strength => 300.0
-    };
+pub fn signal_color(
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    topology: Topology,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) {
+    let cc_tx_control_area_radius    = 200.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
 
@@ -638,7 +604,7 @@ pub fn signal_color(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             cc_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 cc_tx_control_area_radius
             )
         )
@@ -646,320 +612,59 @@ pub fn signal_color(config: &Config) {
         .build();
     let command_center_id = command_center.id();
 
-    let network_position = NetworkPosition::new(
-        Point3D::new(50.0, 50.0, 0.0),
-        -40.0..40.0,
-        -40.0..40.0,
-        0.0..10.0,
-    );
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        100, 
-        config.trx_system_type,
+    let mut devices = create_drone_vec(
+        general_config.drone_count(),
+        drone_positions,
+        vulnerabilities,
+        trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
-        &[]
     ); 
+    devices.insert(0, command_center);
     let scenario = Vec::new(); 
 
     let drone_network = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
+        .set_gps(default_gps(trx_system_type))
+        .set_topology(topology)
         .set_scenario(scenario)
-        .set_delay_multiplier(config.delay_multiplier)
+        .set_delay_multiplier(general_config.delay_multiplier())
         .build();
 
-    let output_filename = derive_filename(config, "signal_color");
+    let output_filename = derive_filename(
+        trx_system_type,
+        topology,
+        "signal_color"
+    );
     let drone_colorings = vec![DeviceColoring::Signal];
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let camera_angle    = CameraAngle::new(1.57, 1.57);
     let renderer        = PlottersRenderer::new(
         &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
+        general_config.plot_caption(),
+        general_config.plot_resolution(),
         axes_ranges,
         &drone_colorings,
         camera_angle
     );
     
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
+    let mut model_player = ModelPlayer::new(
+        general_config.simulation_time(),
         vec![drone_network],
         renderer
     );
 
-    simulation.run();
+    model_player.play();
 }
 
-pub fn signal_color_dynamic(config: &Config) {
-    let cc_tx_control_area_radius    = match config.trx_system_type {
-        TRXSystemType::Color    => 200.0,
-        TRXSystemType::Strength => 600.0
-    };
-    let drone_tx_control_area_radius = 50.0;
-    let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
-
-    let command_center = DeviceBuilder::new()
-        .set_real_position(COMMAND_CENTER_POSITION)
-        .set_power_system(device_power_system())
-        .set_trx_system(
-            cc_trx_system(
-                config.trx_system_type, 
-                cc_tx_control_area_radius
-            )
-        )
-        .set_signal_loss_response(SignalLossResponse::Ignore)
-        .build();
-    let command_center_id = command_center.id();
-
-    let network_position = NetworkPosition::new(
-        NETWORK_ORIGIN,
-        -40.0..40.0,
-        -40.0..40.0,
-        -20.0..20.0,
-    );
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        100, 
-        config.trx_system_type,
-        drone_tx_control_area_radius,
-        drone_gps_rx_signal_level,
-        &[]
-    ); 
-    let scenario = default_movement_scenario(command_center_id); 
-
-    let drone_network = NetworkModelBuilder::new()
-        .set_command_center_id(command_center_id)
-        .set_devices(&devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
-        .set_scenario(scenario)
-        .set_delay_multiplier(config.delay_multiplier)
-        .build();
-
-    let output_filename = derive_filename(config, "signal_color_dynamic");
-    let drone_colorings = vec![DeviceColoring::Signal];
-    let camera_angle    = CameraAngle::new(0.15, 0.5);
-    let renderer        = PlottersRenderer::new(
-        &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
-        Axes3DRanges::default(),
-        &drone_colorings,
-        camera_angle,
-    );
-    
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
-        vec![drone_network],
-        renderer
-    );
-
-    simulation.run();
-}
-
-pub fn infection(config: &Config) {
-    let cc_tx_control_area_radius    = match config.trx_system_type {
-        TRXSystemType::Color    => 200.0,
-        TRXSystemType::Strength => 300.0
-    };
-    let drone_tx_control_area_radius = 25.0;
-    let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
-    let indicator_malware = indicator_malware();
-
-    let command_center = DeviceBuilder::new()
-        .set_real_position(Point3D::new(100.0, 50.0, 0.0))
-        .set_power_system(device_power_system())
-        .set_trx_system(
-            cc_trx_system(
-                config.trx_system_type, 
-                cc_tx_control_area_radius
-            )
-        )
-        .set_signal_loss_response(SignalLossResponse::Ignore)
-        .build();
-    let command_center_id = command_center.id();
-
-    let network_position = NetworkPosition::new(
-        Point3D::new(50.0, 50.0, 0.0),
-        -40.0..40.0,
-        -40.0..40.0,
-        0.0..10.0,
-    );
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        100, 
-        config.trx_system_type,
-        drone_tx_control_area_radius,
-        drone_gps_rx_signal_level,
-        &[indicator_malware]
-    ); 
-    let infected_drone_id = devices[1].id();
-    let scenario = vec!((
-        CONTROL_FREQUENCY,
-        Message::new(
-            command_center_id,
-            infected_drone_id,
-            0, 
-            MessageType::Malware(indicator_malware)
-        ),
-    ));
-
-    let drone_network = NetworkModelBuilder::new()
-        .set_command_center_id(command_center_id)
-        .set_devices(&devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
-        .set_scenario(scenario)
-        .set_delay_multiplier(config.delay_multiplier)
-        .build();
-
-    let output_filename = derive_filename(config, "infection");
-    let drone_colorings = vec![DeviceColoring::Infection]; 
-    let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
-    let camera_angle    = CameraAngle::new(1.57, 1.57);
-    let renderer        = PlottersRenderer::new(
-        &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
-        axes_ranges,
-        &drone_colorings,
-        camera_angle,
-    );
-
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
-        vec![drone_network],
-        renderer
-    );
-
-    simulation.run();
-}
-
-pub fn jamming_infection(config: &Config) {
-    let cc_tx_control_area_radius    = match config.trx_system_type {
-        TRXSystemType::Color    => 200.0,
-        TRXSystemType::Strength => 300.0
-    };
-    let drone_tx_control_area_radius = match config.trx_system_type {
-        TRXSystemType::Color     => 12.5,
-        TRXSystemType::Strength => 30.0,
-    };
-    let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
-    let indicator_malware = indicator_malware();
-    let jamming_malware   = jamming_malware(CONTROL_FREQUENCY);
-
-    let command_center = DeviceBuilder::new()
-        .set_real_position(Point3D::new(100.0, 50.0, 0.0))
-        .set_power_system(device_power_system())
-        .set_trx_system(
-            cc_trx_system(
-                config.trx_system_type, 
-                cc_tx_control_area_radius
-            )
-        )
-        .set_signal_loss_response(SignalLossResponse::Ignore)
-        .build();
-    let command_center_id = command_center.id();
-
-    let network_position = NetworkPosition::new(
-        Point3D::new(50.0, 50.0, 0.0),
-        -40.0..40.0,
-        -40.0..40.0,
-        0.0..10.0,
-    );
-    let vulnerabilities = [indicator_malware, jamming_malware];
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        100, 
-        config.trx_system_type,
-        drone_tx_control_area_radius,
-        drone_gps_rx_signal_level,
-        &vulnerabilities
-    ); 
-    let infected_drone_id = devices[1].id();
-    let indicator_scenario = vec!((
-        CONTROL_FREQUENCY,
-        Message::new(
-            command_center_id,
-            infected_drone_id,
-            0, 
-            MessageType::Malware(indicator_malware)
-        ),
-    ));
-    let jamming_scenario = vec!((
-        CONTROL_FREQUENCY,
-        Message::new(
-            command_center_id,
-            infected_drone_id,
-            0, 
-            MessageType::Malware(jamming_malware)
-        ),
-    ));
-
-    let drone_network_indicator = NetworkModelBuilder::new()
-        .set_command_center_id(command_center_id)
-        .set_devices(&devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
-        .set_scenario(indicator_scenario)
-        .set_delay_multiplier(config.delay_multiplier)
-        .build();
-    let drone_network_jamming = NetworkModelBuilder::new()
-        .set_command_center_id(command_center_id)
-        .set_devices(&devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
-        .set_scenario(jamming_scenario)
-        .set_delay_multiplier(config.delay_multiplier)
-        .build();
-
-    let output_filename = derive_filename(config, "infection_indicator");
-    let drone_colorings = vec![DeviceColoring::Infection]; 
-    let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
-    let camera_angle    = CameraAngle::new(1.57, 1.57);
-    let indicator_renderer = PlottersRenderer::new(
-        &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
-        axes_ranges.clone(),
-        &drone_colorings,
-        camera_angle
-    );
-    
-    let output_filename = derive_filename(config, "infection_jamming");
-    let drone_colorings = vec![DeviceColoring::Signal]; 
-    let jamming_renderer = PlottersRenderer::new(
-        &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
-        axes_ranges,
-        &drone_colorings,
-        camera_angle
-    );
-
-    let mut indicator_simulation = ModelPlayer::new(
-        config.simulation_time,
-        vec![drone_network_indicator],
-        indicator_renderer
-    );
-    let mut jamming_simulation = ModelPlayer::new(
-        config.simulation_time,
-        vec![drone_network_jamming],
-        jamming_renderer
-    );
-
-    indicator_simulation.run();
-    jamming_simulation.run();
-}
-
-pub fn gps_spoofing(config: &Config) {
+pub fn gps_spoofing(
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    topology: Topology,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) {
     let cc_tx_control_area_radius    = 300.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = RED_SIGNAL_LEVEL; 
@@ -970,7 +675,7 @@ pub fn gps_spoofing(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             cc_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 cc_tx_control_area_radius
             )
         )
@@ -978,21 +683,15 @@ pub fn gps_spoofing(config: &Config) {
         .build();
     let command_center_id = command_center.id();
 
-    let network_position = NetworkPosition::new(
-        NETWORK_ORIGIN,
-        -40.0..40.0,
-        -40.0..40.0,
-        -20.0..20.0,
-    );
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        2,
-        config.trx_system_type,
+    let mut devices = create_drone_vec(
+        general_config.drone_count(),
+        drone_positions,
+        vulnerabilities,
+        trx_system_type,
         drone_tx_control_area_radius, 
         drone_gps_rx_signal_level, 
-        &[]
     ); 
+    devices.insert(0, command_center);
     let scenario = vec!(
         (
             CONTROL_FREQUENCY,
@@ -1009,7 +708,7 @@ pub fn gps_spoofing(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 GPS_L1_FREQUENCY, 
                 gps_spoofing_area_radius
             )
@@ -1024,57 +723,56 @@ pub fn gps_spoofing(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
+        .set_gps(default_gps(trx_system_type))
+        .set_topology(topology)
         .set_scenario(scenario)
-        .set_delay_multiplier(config.delay_multiplier)
+        .set_delay_multiplier(general_config.delay_multiplier())
         .build();
 
-    let output_filename = derive_filename(config, "gps_spoofing");
+    let output_filename = derive_filename(
+        trx_system_type,
+        topology, 
+        "gps_spoofing"
+    );
     let axes_ranges     = Axes3DRanges::new(0.0..200.0, 0.0..0.0, 0.0..200.0);
     let drone_colorings = vec![DeviceColoring::SingleColor(0, 0, 0)]; 
     let camera_angle    = CameraAngle::new(1.57, 1.57);
     let renderer        = PlottersRenderer::new(
         &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
+        general_config.plot_caption(),
+        general_config.plot_resolution(),
         axes_ranges,
         &drone_colorings,
         camera_angle,
     );
 
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
+    let mut model_player = ModelPlayer::new(
+        general_config.simulation_time(),
         vec![drone_network],
         renderer
     );
 
-    simulation.run();
+    model_player.play();
 }
 
-pub fn dos(config: &Config) {
-    let cc_tx_control_area_radius    = match config.trx_system_type {
-        TRXSystemType::Color    => 100.0,
-        TRXSystemType::Strength => 300.0
-    };
-    let drone_tx_control_area_radius = match config.trx_system_type {
-        TRXSystemType::Color  => 20.0,
-        TRXSystemType::Strength => 30.0,
-    };
+fn malware_infection(
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    topology: Topology,
+    drone_positions: &[Point3D],
+    vulnerabilities: &[Vec<Malware>],
+) {
+    let cc_tx_control_area_radius    = 200.0;
+    let drone_tx_control_area_radius = 25.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
-    let dos_area_radius = 50.0;
-    let dos_malware     = Malware::new(
-        500, 
-        MalwareType::DoS(DEVICE_MAX_POWER), 
-        true
-    );
+    let attacker_tx_area_radius      = 50.0;
 
     let command_center = DeviceBuilder::new()
         .set_real_position(Point3D::new(100.0, 50.0, 0.0))
         .set_power_system(device_power_system())
         .set_trx_system(
             cc_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 cc_tx_control_area_radius
             )
         )
@@ -1082,72 +780,140 @@ pub fn dos(config: &Config) {
         .build();
     let command_center_id = command_center.id();
 
-    let network_position = NetworkPosition::new(
-        Point3D::new(50.0, 50.0, 0.0),
-        -40.0..40.0,
-        -40.0..40.0,
-        0.0..10.0,
-    );
-    let devices = create_device_vec(
-        command_center,
-        &network_position,
-        100, 
-        config.trx_system_type,
+    let mut devices = create_drone_vec(
+        general_config.drone_count(),
+        drone_positions,
+        vulnerabilities,
+        trx_system_type,
         drone_tx_control_area_radius,
         drone_gps_rx_signal_level,
-        &[dos_malware]
     ); 
+    devices.insert(0, command_center);
     
-    let dos_attacker = DeviceBuilder::new()
+    let attacker = DeviceBuilder::new()
         .set_real_position(Point3D::new(-10.0, 2.0, 0.0))
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                config.trx_system_type,
+                trx_system_type,
                 CONTROL_FREQUENCY,
-                dos_area_radius
+                attacker_tx_area_radius
             )
         )
         .build();
+    let malware = general_config.malware()
+        .expect("Missing malware type");
     let attacker_devices = [
         AttackerDevice::new(
-            dos_attacker, 
-            AttackType::MalwareDistribution(dos_malware)
+            attacker.clone(), 
+            AttackType::MalwareDistribution(malware)
         )
     ];
 
-    let drone_network = NetworkModelBuilder::new()
+    let drone_network_builder = NetworkModelBuilder::new()
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
+        .set_gps(default_gps(trx_system_type))
+        .set_topology(topology)
+        .set_delay_multiplier(general_config.delay_multiplier());
+    
+    if general_config.display_malware_propagation() {
+        malware_propagation(
+            attacker,
+            drone_network_builder.clone(),
+            general_config,
+            trx_system_type,
+            topology,
+        );
+    }
+
+    let drone_network = drone_network_builder
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
-        .set_delay_multiplier(config.delay_multiplier)
         .build();
 
-    let output_filename = derive_filename(config, "dos");
+    let text = match malware.malware_type() {
+        MalwareType::DoS(_)     => "mal_dos",
+        MalwareType::Indicator  => "mal_indicator",
+        MalwareType::Jamming(_) => "mal_jamming",
+    };
+    let output_filename = derive_filename(
+        trx_system_type,
+        topology, 
+        text,
+    );
     let drone_colorings = vec![DeviceColoring::Signal]; 
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let camera_angle    = CameraAngle::new(1.57, 1.57);
     let renderer        = PlottersRenderer::new(
         &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
+        general_config.plot_caption(),
+        general_config.plot_resolution(),
         axes_ranges,
         &drone_colorings,
         camera_angle
     );
 
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
+    let mut model_player = ModelPlayer::new(
+        general_config.simulation_time(),
         vec![drone_network],
         renderer
     );
 
-    simulation.run();
+    model_player.play();
 }
 
-pub fn signal_loss_response(config: &Config) {
+fn malware_propagation(
+    attacker: Device,
+    drone_network_builder: NetworkModelBuilder,
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    topology: Topology,
+) {
+    let malware = indicator_malware();
+    let attacker_devices = [
+        AttackerDevice::new(
+            attacker, 
+            AttackType::MalwareDistribution(malware)
+        )
+    ];
+
+    let drone_network = drone_network_builder
+        .set_attacker_devices(&attacker_devices)
+        .build();
+
+    let output_filename = derive_filename(
+        trx_system_type,
+        topology, 
+        "mal_indicator",
+    );
+    let drone_colorings = vec![DeviceColoring::Infection]; 
+    let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
+    let camera_angle    = CameraAngle::new(1.57, 1.57);
+    let renderer        = PlottersRenderer::new(
+        &output_filename,
+        general_config.plot_caption(),
+        general_config.plot_resolution(),
+        axes_ranges,
+        &drone_colorings,
+        camera_angle
+    );
+
+    let mut model_player = ModelPlayer::new(
+        general_config.simulation_time(),
+        vec![drone_network],
+        renderer
+    );
+
+    model_player.play();
+}
+
+fn signal_loss_response(
+    general_config: &GeneralConfig,
+    trx_system_type: TRXSystemType,
+    topology: Topology,
+    _drone_positions: &[Point3D],
+    _vulnerabilities: &[Vec<Malware>],
+) {
     let cc_tx_control_area_radius    = 600.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
@@ -1158,7 +924,7 @@ pub fn signal_loss_response(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             cc_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 cc_tx_control_area_radius
             )
         )
@@ -1172,7 +938,7 @@ pub fn signal_loss_response(config: &Config) {
         .set_movement_system(device_movement_system())
         .set_trx_system(
             drone_trx_system(
-                config.trx_system_type, 
+                trx_system_type, 
                 drone_tx_control_area_radius, 
                 drone_gps_rx_signal_level
             )
@@ -1221,7 +987,7 @@ pub fn signal_loss_response(config: &Config) {
         .set_power_system(device_power_system())
         .set_trx_system(
             ewd_trx_system(
-                config.trx_system_type,
+                trx_system_type,
                 CONTROL_FREQUENCY,
                 control_ewd_suppression_area_radius
             )
@@ -1235,29 +1001,33 @@ pub fn signal_loss_response(config: &Config) {
         .set_command_center_id(command_center_id)
         .set_devices(&devices)
         .set_attacker_devices(&attacker_devices)
-        .set_gps(default_gps(config.trx_system_type))
-        .set_topology(config.topology)
+        .set_gps(default_gps(trx_system_type))
+        .set_topology(topology)
         .set_scenario(scenario)
-        .set_delay_multiplier(config.delay_multiplier)
+        .set_delay_multiplier(general_config.delay_multiplier())
         .build();
  
-    let output_filename = derive_filename(config, "signal_loss_response"); 
+    let output_filename = derive_filename(
+        trx_system_type,
+        topology,
+        "signal_loss_response"
+    ); 
     let drone_colorings = vec![DeviceColoring::Signal]; 
     let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
-        &config.plot_caption,
-        config.plot_resolution,
+        general_config.plot_caption(),
+        general_config.plot_resolution(),
         Axes3DRanges::default(),
         &drone_colorings,
         camera_angle,
     );
     
-    let mut simulation = ModelPlayer::new(
-        config.simulation_time,
+    let mut model_player = ModelPlayer::new(
+        general_config.simulation_time(),
         vec![drone_network],
         renderer
     );
 
-    simulation.run();
+    model_player.play();
 }

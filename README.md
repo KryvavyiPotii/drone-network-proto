@@ -6,6 +6,7 @@ A crate that aims to model a UAV networks and the impact of electronic warfare a
 
 * Green circle - command center transmission area.
 * Yellow circle - destination point.
+* Orange circle - transmission area of an attacker device that executes GPS spoofing attack.
 * Red circle - transmission area of an electronic warfare device that suppresses GPS signal.
   On contact a drone loses its global position and moves in the same horizontal direction in which it moved before the contact.
 * Blue circle - transmission area of an electronic warfare device that suppresses control signal or an attacker device that spreads malware.
@@ -27,22 +28,22 @@ Options:
           Set the plot height [default: 300]
       --time <simulation time>
           Set the simulation time [default: 15000]
-  -e, --example <example number>
-          Run an experiment by its number
   -x, --experiment <experiment title>
-          Choose experiment title [possible values: delays, dos, control, gps, gpsspoof, infection, signals]
+          Choose experiment title [possible values: delays, control, gps, gpsspoof, malware, signals]
       --trx <trx system>
-          Choose device TRX system type [possible values: color, strength]
+          Choose device TRX system type [default: both] [possible values: both, color, strength]
+  -t, --topology <network topology>
+          Choose network topology [default: both] [possible values: both, mesh, star]
+  -n <drone count>
+          Set the number of drones in the network [default: 100]
   -d, --delay-multiplier <delay multiplier>
           Set signal transmission delay multiplier [default: 0.0]
-  -t, --topology <network topology>
-          Choose network topology [possible values: mesh, star]
       --display-delayless
           Show the same network model without delays as well ("delays" experiment)
-      --dynamic
-          Show signal colors when drones are moving ("signals" experiment)
-  -i, --infection <infection type>
-          Choose infection type ("infection" experiment) [possible values: indicator, jamming]
+      --display-propagation
+          Show malware propagation as well ("malware" experiment)
+  -i, --infection <malware type>
+          Choose infection type ("malware" experiment) [possible values: dos, indicator, jamming]
   -h, --help
           Print help
   -V, --version

@@ -9,19 +9,15 @@ use impl_ops::{
 
 use crate::backend::message::MessageCost;
 
-use super::{
-    GREEN_SIGNAL_ZONE_COEFFICIENT, YELLOW_SIGNAL_ZONE_COEFFICIENT
-};
-
 
 pub const GREEN_SIGNAL_STRENGTH_VALUE: f32           = 100.0;
 pub const NO_SIGNAL_STRENGTH: SignalStrength         = SignalStrength(0.0);
 pub const MAX_BLACK_SIGNAL_STRENGTH: SignalStrength  = SignalStrength(1.0);
 pub const MAX_RED_SIGNAL_STRENGTH: SignalStrength    = SignalStrength(
-    GREEN_SIGNAL_STRENGTH_VALUE * (1.0 - YELLOW_SIGNAL_ZONE_COEFFICIENT)
+    GREEN_SIGNAL_STRENGTH_VALUE * 0.2
 );
 pub const MAX_YELLOW_SIGNAL_STRENGTH: SignalStrength = SignalStrength(
-    GREEN_SIGNAL_STRENGTH_VALUE * (1.0 - GREEN_SIGNAL_ZONE_COEFFICIENT)
+    GREEN_SIGNAL_STRENGTH_VALUE * 0.5
 );
 pub const GREEN_SIGNAL_STRENGTH: SignalStrength = SignalStrength(
     GREEN_SIGNAL_STRENGTH_VALUE

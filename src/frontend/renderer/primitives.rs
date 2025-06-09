@@ -1,4 +1,4 @@
-use full_palette::{GREEN_400, GREY, ORANGE, PINK, RED_400, YELLOW_700};
+use full_palette::{GREEN_400, GREY, ORANGE, PINK_200, RED_400, YELLOW_700};
 use plotters::prelude::*;
 use plotters::style::RGBColor;
 
@@ -61,12 +61,8 @@ pub fn device_primitive(
 ) -> PlottersCircle {
     let point = PlottersPoint3D::from(device.position());
     let color = device_color(device, coloring);
+    let size  = device_size(plot_resolution); 
     let style = Into::<ShapeStyle>::into(color).filled();
-    let size  = if plot_resolution.height() < CIRCLE_SIZE_COEF {
-        1  
-    } else {
-        plot_resolution.height() / CIRCLE_SIZE_COEF
-    };
 
     Circle::new(point.into(), size, style)
 }
@@ -89,7 +85,7 @@ fn device_color(device: &Device, coloring: DeviceColoring) -> RGBColor {
 
 fn color_by_infection(infected: bool) -> RGBColor {
     if infected {
-        PINK
+        PINK_200
     } else {
         BLACK
     }
@@ -105,6 +101,14 @@ fn color_by_signal(signal_level: SignalLevel) -> RGBColor {
     } else {
         BLACK
     }
+}
+
+fn device_size(plot_resolution: PlotResolution) -> Pixel {
+    if plot_resolution.width() < CIRCLE_SIZE_COEF {
+        return 1;  
+    } 
+
+    plot_resolution.width() / CIRCLE_SIZE_COEF
 }
 
 #[must_use]

@@ -18,14 +18,14 @@ use msgproc::{
     MessageProcessError, send_message, try_add_task, try_finish_message, 
     try_preprocess_message
 };
-use signalupdate::get_best_signal_levels_for_controlled_devices;
+use sigupdate::get_best_signal_levels_for_controlled_devices;
 
 
 pub mod attack;
 pub mod gps;
 
 mod msgproc;
-mod signalupdate;
+mod sigupdate;
 
 
 fn get_any_device<'a>(

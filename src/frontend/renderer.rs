@@ -35,6 +35,9 @@ type PlottersChartContext<'a> = ChartContext<
 >;
 
 
+const FONT: &str = "sans-serif";
+
+
 fn network_models_destinations(
     network_models: &[NetworkModel]
 ) -> Vec<Point3D> {
@@ -161,20 +164,18 @@ impl<'a> PlottersRenderer<'a> {
         if !self.caption.is_empty() {
             chart_builder.caption(
                 &self.caption, 
-                ("sans-serif", self.font_size)
+                (FONT, self.font_size)
             );
         }
 
-        let chart = chart_builder
+        chart_builder
             .margin(PLOT_MARGIN)
             .build_cartesian_3d(
                 self.axes_ranges.x(),
                 self.axes_ranges.y(),
                 self.axes_ranges.z(),
             )
-            .expect("Failed to create a chart");
-
-        chart
+            .expect("Failed to create a chart")
     }
 
     fn draw_network_models(
@@ -204,8 +205,8 @@ impl<'a> PlottersRenderer<'a> {
                 p.into_matrix()
             })
             .configure_axes()
-            .axis_panel_style(GREY.mix(0.2))
-            .label_style(("sans-serif", self.font_size / 2))
+            .axis_panel_style(GREY.mix(0.1))
+            .label_style((FONT, self.font_size / 2))
             .draw()
             .expect("Failed to draw a chart");
     }

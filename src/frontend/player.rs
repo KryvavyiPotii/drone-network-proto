@@ -52,12 +52,10 @@ impl<'a> ModelPlayer<'a> {
     /// # Panics
     ///
     /// Will panic if an error occurs during rendering. 
-    pub fn run(&mut self) {
-        let end = self.end_time;
-
+    pub fn play(&mut self) {
         info!("Output filename: {}", self.renderer.output_filename());
 
-        for _ in (0..end).step_by(ITERATION_TIME as usize) {
+        for _ in (0..self.end_time).step_by(ITERATION_TIME as usize) {
             self.network_models
                 .iter_mut()
                 .for_each(NetworkModel::update);
