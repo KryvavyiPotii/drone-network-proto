@@ -76,7 +76,7 @@ pub struct PlottersRenderer<'a> {
     output_filename: String,
     caption: String,
     plot_resolution: PlotResolution,
-    font_size: u32,
+    font_size: Pixel,
     axes_ranges: Axes3DRanges,
     camera_angle: CameraAngle,
     device_colorings: Vec<DeviceColoring>,
@@ -97,9 +97,7 @@ impl<'a> PlottersRenderer<'a> {
         camera_angle: CameraAngle,
     ) -> Self {
         let font_size = font_size(plot_resolution);
-        let output_filename = output_filename.to_string();
-
-        let area = BitMapBackend::gif(
+        let area      = BitMapBackend::gif(
             &output_filename, 
             plot_resolution.into(),
             ITERATION_TIME
@@ -110,7 +108,7 @@ impl<'a> PlottersRenderer<'a> {
             .into_drawing_area();
 
         Self {
-            output_filename,
+            output_filename: output_filename.to_string(),
             caption: caption.to_string(),
             plot_resolution,
             font_size,
