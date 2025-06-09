@@ -3,9 +3,7 @@ use std::collections::hash_map::Values;
 
 use super::{CONTROL_FREQUENCY, ITERATION_TIME};
 use super::connections::{ConnectionGraph, Topology};
-use super::device::{
-    Device, DeviceId, IdToDeviceMap, IdToTaskMap, SignalLossResponse
-};
+use super::device::{Device, DeviceId, IdToDeviceMap, IdToTaskMap};
 use super::mathphysics::{Megahertz, Millisecond};
 use super::message::{Message, MessageQueue, MessageType, Task};
 
@@ -187,14 +185,9 @@ impl NetworkModel {
         self.device_map.tasks()
     }
     
-    /// # Panics
-    ///
-    /// Will panic if a command device is not in `device_map`.
     #[must_use]
-    pub fn command_device(&self) -> &Device {
-        self.device_map
-            .get(&self.command_device_id)
-            .unwrap()
+    pub fn command_device(&self) -> Option<&Device> {
+        self.device_map.get(&self.command_device_id)
     }
 
     #[must_use]
@@ -273,14 +266,7 @@ impl NetworkModel {
     }
     
     fn remove_shut_down_devices(&mut self) {
-        self.device_map.retain(|device_id, device|
-            *device_id == self.command_device_id
-            || device.receives_signal(CONTROL_FREQUENCY)
-            || !matches!(
-                device.signal_loss_response(), 
-                SignalLossResponse::Shutdown
-            )
-        );
+        self.device_map.retain(|_, device| !device.is_shut_down());
     }
     
     fn resend_current_tasks_to_reconnecting_devices(&mut self) {

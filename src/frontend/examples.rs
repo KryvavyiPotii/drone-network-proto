@@ -952,6 +952,10 @@ fn signal_loss_response(
         .clone()
         .set_signal_loss_response(SignalLossResponse::Hover)
         .build();
+    let ignore_drone = drone_builder
+        .clone()
+        .set_signal_loss_response(SignalLossResponse::Ignore)
+        .build();
     let rth_drone = drone_builder
         .clone()
         .set_signal_loss_response(
@@ -966,6 +970,7 @@ fn signal_loss_response(
         command_center, 
         ascend_drone, 
         hover_drone, 
+        ignore_drone,
         rth_drone, 
         shutdown_drone
     ]; 

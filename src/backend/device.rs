@@ -444,10 +444,7 @@ impl Device {
     }
 
     fn process_malware(&mut self, malware: &Malware) {
-        if matches!(
-            self.infection_state(malware), 
-            InfectionState::Vulnerable
-        ) {
+        if matches!(self.infection_state(malware), InfectionState::Vulnerable) {
             self.infection_states.insert(*malware, InfectionState::Infected);
         }
     }
@@ -523,7 +520,7 @@ impl Device {
                 self.process_task();
             },
             SignalLossResponse::Ignore                   =>
-                (),
+                self.process_task(),
             SignalLossResponse::ReturnToHome(home_point) => {
                 self.task = Task::Reconnect(home_point);
                 self.process_task();
@@ -571,6 +568,11 @@ impl Device {
         self.power_system    = PowerSystem::default();
         self.movement_system = MovementSystem::default();
         self.trx_system      = TRXSystem::default();
+    }
+
+    #[must_use]
+    pub fn is_shut_down(&self) -> bool {
+        self.power_system == PowerSystem::default()
     }
 
     // Handling is done on the network model level.
@@ -747,12 +749,6 @@ mod tests {
         )
     }
 
-    fn device_is_destructed(device: &Device) -> bool {
-        device.power_system == PowerSystem::default()
-        && device.trx_system == TRXSystem::default()
-        && device.movement_system == MovementSystem::default()
-    }
-
     fn jamming_malware(jammed_frequency: Megahertz) -> Malware {
         Malware::new(
             0, 
@@ -848,16 +844,14 @@ mod tests {
         assert_eq!(device.trx_system, trx_system);
 
         assert!(device.update_state().is_ok());
-        assert!(!device_is_destructed(&device));
+        assert!(!device.is_shut_down());
         
         let _expected_error = DeviceError::PowerSystemError(
             PowerSystemError::NotEnoughPower
         );
 
-        assert!(
-            matches!(device.update_state(), Err(_expected_error))
-        );
-        assert!(device_is_destructed(&device));
+        assert!(matches!(device.update_state(), Err(_expected_error)));
+        assert!(device.is_shut_down());
     }
 
     #[test]
@@ -1018,7 +1012,7 @@ mod tests {
             let _ = device_without_signal.update_state();
         }
 
-        assert!(device_is_destructed(&device_without_signal));
+        assert!(device_without_signal.is_shut_down());
     }
     
     #[test]
@@ -1218,7 +1212,7 @@ mod tests {
 
         device.selfdestruction();
 
-        assert!(device_is_destructed(&device));
+        assert!(device.is_shut_down());
     }
 
     #[test]

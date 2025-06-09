@@ -235,12 +235,15 @@ impl<'a> PlottersRenderer<'a> {
     ) {
         let network_model_primitives = network_models
             .iter()
-            .map(|network_model| 
-                command_device_primitive(
-                    network_model.command_device(), 
+            .filter_map(|network_model| {
+                let command_device = network_model.command_device()?;
+                let primitive = command_device_primitive(
+                    command_device, 
                     self.plot_resolution
-                )
-            );
+                );
+
+                Some(primitive)
+            });
 
         chart_context
             .draw_series(network_model_primitives)
