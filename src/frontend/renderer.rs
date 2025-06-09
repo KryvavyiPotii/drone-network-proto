@@ -98,7 +98,7 @@ impl<'a> PlottersRenderer<'a> {
     ) -> Self {
         let font_size = font_size(plot_resolution);
         let area      = BitMapBackend::gif(
-            &output_filename, 
+            output_filename, 
             plot_resolution.into(),
             ITERATION_TIME
                 .try_into()

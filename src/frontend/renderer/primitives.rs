@@ -1,4 +1,6 @@
-use full_palette::{GREEN_400, GREY, ORANGE, PINK_200, RED_400, YELLOW_700};
+use full_palette::{
+    GREEN_400, GREY, ORANGE, PINK_300, PINK_200, RED_400, YELLOW_700
+};
 use plotters::prelude::*;
 use plotters::style::RGBColor;
 
@@ -157,11 +159,16 @@ fn attacker_device_area_color(
         attacker_device.attack_type(), 
         AttackType::GPSSpoofing(_)
     );
+    let spreads_malware = matches!(
+        attacker_device.attack_type(), 
+        AttackType::MalwareDistribution(_)
+    );
     
     match frequency {
-        GPS_L1_FREQUENCY if spoofs_gps => ORANGE,
-        GPS_L1_FREQUENCY               => RED,
-        CONTROL_FREQUENCY              => BLUE,
-        _                              => GREY
+        GPS_L1_FREQUENCY if spoofs_gps       => ORANGE,
+        GPS_L1_FREQUENCY                     => RED,
+        CONTROL_FREQUENCY if spreads_malware => PINK_300,
+        CONTROL_FREQUENCY                    => BLUE,
+        _                                    => GREY
     }
 }

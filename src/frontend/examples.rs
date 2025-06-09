@@ -920,7 +920,7 @@ fn signal_loss_response(
     let control_ewd_suppression_area_radius = 150.0;
 
     let command_center = DeviceBuilder::new()
-        .set_real_position(COMMAND_CENTER_POSITION)
+        .set_real_position(Point3D::new(100.0, 50.0, 0.0))
         .set_power_system(device_power_system())
         .set_trx_system(
             cc_trx_system(
@@ -933,7 +933,7 @@ fn signal_loss_response(
     let command_center_id = command_center.id();
    
     let drone_builder = DeviceBuilder::new()
-        .set_real_position(NETWORK_ORIGIN)
+        .set_real_position(Point3D::new(70.0, 50.0, 30.0))
         .set_power_system(device_power_system())
         .set_movement_system(device_movement_system())
         .set_trx_system(
@@ -1017,13 +1017,14 @@ fn signal_loss_response(
         topology,
         "signal_loss_response"
     ); 
+    let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..100.0, 0.0..100.0);
     let drone_colorings = vec![DeviceColoring::Signal]; 
     let camera_angle    = CameraAngle::new(0.15, 0.5);
     let renderer        = PlottersRenderer::new(
         &output_filename,
         general_config.plot_caption(),
         general_config.plot_resolution(),
-        Axes3DRanges::default(),
+        axes_ranges,
         &drone_colorings,
         camera_angle,
     );

@@ -4,12 +4,13 @@ A crate that aims to model a UAV networks and the impact of electronic warfare a
 
 ## Render image legend
 
-* Green circle - command center transmission area.
-* Yellow circle - destination point.
-* Orange circle - transmission area of an attacker device that executes GPS spoofing attack.
-* Red circle - transmission area of an electronic warfare device that suppresses GPS signal.
+* **Green circle** - command center transmission area.
+* **Yellow circle** - destination point.
+* **Orange circle** - transmission area of an attacker device that executes GPS spoofing attack.
+* **Red circle** - transmission area of an electronic warfare device that suppresses GPS signal.
   On contact a drone loses its global position and moves in the same horizontal direction in which it moved before the contact.
-* Blue circle - transmission area of an electronic warfare device that suppresses control signal or an attacker device that spreads malware.
+* **Pink circle** - transmission area of an attacker device that spreads malware.
+* **Blue circle** - transmission area of an electronic warfare device that suppresses control signal.
 
 ## Usage
 
