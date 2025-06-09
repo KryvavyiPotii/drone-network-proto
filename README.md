@@ -29,7 +29,7 @@ Options:
       --time <simulation time>
           Set the simulation time [default: 15000]
   -x, --experiment <experiment title>
-          Choose experiment title [possible values: delays, control, gps, gpsspoof, malware, signals]
+          Choose experiment title [possible values: delays, control, gps, gpsspoof, malware, signals, signalloss]
       --trx <trx system>
           Choose device TRX system type [default: both] [possible values: both, color, strength]
   -t, --topology <network topology>

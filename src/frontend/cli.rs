@@ -8,16 +8,16 @@ use crate::backend::mathphysics::Millisecond;
 use super::renderer::{Pixel, PlotResolution};
 
 use args::{
-    ARG_DELAY_MULTIPLIER, ARG_DISPLAY_DELAYLESS_NETWORK, 
+    handle_arguments, ARG_DELAY_MULTIPLIER, ARG_DISPLAY_DELAYLESS_NETWORK, 
     ARG_DISPLAY_MALWARE_PROPAGATION, ARG_DRONE_COUNT, ARG_EXPERIMENT_TITLE, 
     ARG_MALWARE_TYPE, ARG_NETWORK_TOPOLOGY, ARG_PLOT_CAPTION, ARG_PLOT_HEIGHT, 
     ARG_PLOT_WIDTH, ARG_SIM_TIME, ARG_TRX_SYSTEM, DEFAULT_DELAY_MULTIPLIER, 
     DEFAULT_DRONE_COUNT, DEFAULT_PLOT_CAPTION, DEFAULT_PLOT_HEIGHT, 
     DEFAULT_PLOT_WIDTH, DEFAULT_SIM_TIME, EXP_COMMAND_DELAYS, 
     EXP_GPS_AND_CONTROL, EXP_GPS_ONLY, EXP_GPS_SPOOFING, EXP_MALWARE_INFECTION, 
-    EXP_SIGNAL_COLOR, MAL_DOS, MAL_INDICATOR, MAL_JAMMING, TOPOLOGY_BOTH, 
-    TOPOLOGY_MESH, TOPOLOGY_STAR, TRX_BOTH, TRX_COLOR, TRX_STRENGTH, 
-    handle_arguments
+    EXP_SIGNAL_COLOR, EXP_SIGNAL_LOSS, MAL_DOS, MAL_INDICATOR, MAL_JAMMING, 
+    TOPOLOGY_BOTH, TOPOLOGY_MESH, TOPOLOGY_STAR, TRX_BOTH, TRX_COLOR, 
+    TRX_STRENGTH
 };
 
 
@@ -26,7 +26,7 @@ mod args;
 
 pub fn cli() {
     let matches = Command::new("drone_network")
-        .version("0.15.5")
+        .version("0.15.6")
         .about("Models drone networks.")
         .arg(
             Arg::new(ARG_PLOT_CAPTION)
@@ -69,7 +69,8 @@ pub fn cli() {
                     EXP_GPS_ONLY,
                     EXP_GPS_SPOOFING,
                     EXP_MALWARE_INFECTION,
-                    EXP_SIGNAL_COLOR
+                    EXP_SIGNAL_COLOR,
+                    EXP_SIGNAL_LOSS,
                 ])
                 .help("Choose experiment title")
         )

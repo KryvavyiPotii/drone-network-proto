@@ -30,6 +30,7 @@ pub const EXP_GPS_AND_CONTROL: &str   = "control";
 pub const EXP_GPS_ONLY: &str          = "gps";
 pub const EXP_GPS_SPOOFING: &str      = "gpsspoof";
 pub const EXP_SIGNAL_COLOR: &str      = "signals";
+pub const EXP_SIGNAL_LOSS: &str       = "signalloss";
 pub const EXP_MALWARE_INFECTION: &str = "malware";
 
 pub const MAL_DOS: &str       = "dos";
@@ -87,6 +88,7 @@ pub fn handle_arguments(matches: &ArgMatches) {
         EXP_GPS_SPOOFING      => Example::GPSSpoofing,
         EXP_MALWARE_INFECTION => Example::MalwareInfection, 
         EXP_SIGNAL_COLOR      => Example::SignalColor, 
+        EXP_SIGNAL_LOSS       => Example::SignalLossResponse,
         _ => return
     };
 
