@@ -8,7 +8,7 @@ use super::mathphysics::{Megahertz, Millisecond};
 use super::message::{Message, MessageQueue, MessageType, Task};
 
 use attack::{
-    AttackerDevice, add_malicious_messages_to_queue,
+    AttackerDevice, add_malicious_messages_to_queue, try_handle_infection,
     try_multiply_malicious_message_from_receivers,
 };
 use gps::GPS;
@@ -229,7 +229,6 @@ impl NetworkModel {
         self.resend_current_tasks_to_reconnecting_devices();
         self.execute_attacks();
         self.process_message_queue();
-        self.device_map.handle_infection();
         self.device_map.update_states();
         self.connect_gps_to_all_devices();
         self.add_gps_messages_to_queue();
@@ -352,6 +351,14 @@ impl NetworkModel {
                 &mut self.device_map,
                 delay_map,
                 self.current_time
+            );
+
+            let _ = try_handle_infection(
+                message,
+                &receiver_ids,
+                &mut self.device_map,
+                delay_map,
+                self.current_time,
             );
 
             let _ = try_finish_message(

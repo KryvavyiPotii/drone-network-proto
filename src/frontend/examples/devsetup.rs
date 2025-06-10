@@ -18,7 +18,7 @@ use crate::backend::signal::{
 };
 
 
-pub const DEVICE_MAX_POWER: PowerUnit = 10_000;
+pub const DEVICE_MAX_POWER: PowerUnit = 100_000;
 
 const BIG_SIGNAL_STRENGTH_VALUE: f32 = 100_000.0;
 const VULNERABILITY_PROBABILITY: f64 = 1.0;

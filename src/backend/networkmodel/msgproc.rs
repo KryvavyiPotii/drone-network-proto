@@ -1,7 +1,8 @@
 use thiserror::Error;
 
 use crate::backend::device::{
-    Device, DeviceId, IdToDelayMap, IdToDeviceMap, IdToTaskMap, BROADCAST_ID
+    Device, DeviceError, DeviceId, IdToDelayMap, IdToDeviceMap, IdToTaskMap, 
+    BROADCAST_ID
 };
 use crate::backend::mathphysics::{Megahertz, Millisecond};
 use crate::backend::message::{Message, MessageType};
@@ -24,11 +25,17 @@ pub enum MessageProcessError {
 }
 
 #[derive(Error, Debug)]
-pub enum UnicastMessageError {
+pub enum MessageUnicastError {
     #[error("Message was not received")]
     NotReceived,
     #[error("Message should be sent later")]
     TooEarly,
+}
+
+impl From<DeviceError> for MessageUnicastError {
+    fn from(_device_error: DeviceError) -> Self {
+        Self::NotReceived
+    }
 }
 
 
@@ -79,13 +86,11 @@ fn unicast_message(
     device: &mut Device,
     delay: Millisecond,
     current_time: Millisecond
-) -> Result<DeviceId, UnicastMessageError> {
+) -> Result<DeviceId, MessageUnicastError> {
     if current_time < message.time() + delay {
-        return Err(UnicastMessageError::TooEarly);
+        return Err(MessageUnicastError::TooEarly);
     }
-    if device.receive_and_process_message(message, frequency).is_err() {
-        return Err(UnicastMessageError::NotReceived);
-    }
+    device.receive_and_process_message(message, frequency)?;
     
     Ok(device.id())
 }
@@ -161,10 +166,16 @@ pub fn try_finish_message(
         .values()
         .max()
         .unwrap_or(&0);
+    let infection_delay = if let Some(malware) = message.malware() {
+        malware.infection_delay()
+    } else {
+        0
+    };
 
     // We assume that the message processing is finished if it was processed by 
-    // a device with the longest delay.
-    if current_time < message.time() + longest_delay {
+    // a device with the longest delay. If the message contains malware than we
+    // also consider its infection delay.
+    if current_time < message.time() + longest_delay + infection_delay {
         return Err(MessageProcessError::TooEarly)
     }
     

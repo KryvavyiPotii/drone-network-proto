@@ -576,18 +576,8 @@ impl Device {
     }
 
     // Handling is done on the network model level.
-    pub fn handle_infection(&mut self) {
-        let infections: Vec<Malware> = self.infection_states
-            .iter()
-            .filter_map(|(infection_type, infection_state)| 
-                match infection_state {
-                    InfectionState::Infected => Some(*infection_type),
-                    _ => None
-                }
-            )
-            .collect();
-
-        for malware in &infections {
+    pub fn handle_malware_infections(&mut self) {
+        for malware in &self.malware_infections() {
             match malware.malware_type() {
                 MalwareType::DoS(lost_power)    => 
                     self.handle_dos(*lost_power),
@@ -597,6 +587,18 @@ impl Device {
                     self.handle_jamming(*frequency)
             }
         }
+    }
+
+    fn malware_infections(&self) -> Vec<Malware> {
+        self.infection_states
+            .iter()
+            .filter_map(|(infection_type, infection_state)| 
+                match infection_state {
+                    InfectionState::Infected => Some(*infection_type),
+                    _ => None
+                }
+            )
+            .collect()
     }
     
     fn handle_dos(&mut self, lost_power: PowerUnit) {

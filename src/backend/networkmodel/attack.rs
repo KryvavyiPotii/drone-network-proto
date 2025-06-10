@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::backend::CONTROL_FREQUENCY;
 use crate::backend::connections::ConnectionGraph;
-use crate::backend::device::{Device, DeviceId, IdToDeviceMap};
+use crate::backend::device::{Device, DeviceId, IdToDelayMap, IdToDeviceMap};
 use crate::backend::malware::Malware;
 use crate::backend::mathphysics::{Megahertz, Millisecond, Point3D};
 use crate::backend::message::{Message, MessageType, MessageQueue};
@@ -13,6 +13,8 @@ use crate::backend::signal::GPS_L1_FREQUENCY;
 pub enum MalwareSpreadError {
     #[error("Message was not received")]
     DoesNotSpread,
+    #[error("Malicious message is not being processed")]
+    MessageNotInProgress,
     #[error("Message does not contain malware")]
     NotMalicious,
 }
@@ -30,18 +32,19 @@ pub fn try_multiply_malicious_message_from_receivers(
     connections: &ConnectionGraph,
     malicious_messages: &mut Vec<(Megahertz, Message)>
 ) -> Result<(), MalwareSpreadError> {
-    let MessageType::Malware(malware) = message.message_type() else {
+    if !message.is_in_progress() {
+        return Err(MalwareSpreadError::MessageNotInProgress);
+    }
+    let Some(malware) = message.malware() else {
         return Err(MalwareSpreadError::NotMalicious);
     };
-
     if !malware.spreads() {
         return Err(MalwareSpreadError::DoesNotSpread);
     }
 
     for receiver_id in receiver_ids {
-        let Some(receiver) = device_map.get(receiver_id) else {
-            continue;
-        };
+        let Some(receiver) = device_map.get(receiver_id) else { continue; };
+
         if !receiver.is_infected_with(malware) {
             continue;
         }
@@ -65,9 +68,7 @@ fn multiply_malicious_message(
     connections: &ConnectionGraph,
     malicious_messages: &mut Vec<(Megahertz, Message)>
 ) {
-    let MessageType::Malware(malware) = initial_message.message_type() else {
-        return;
-    };
+    let Some(malware) = initial_message.malware() else { return; };
 
     for neighbor in connections.neighbors(infected_device) {
         let malicious_message = Message::new(
@@ -95,10 +96,7 @@ pub fn add_malicious_messages_to_queue(
             continue;
         };
 
-        let MessageType::Malware(malware) = malicious_message.message_type(
-        ) else {
-            continue;    
-        };
+        let Some(malware) = malicious_message.malware() else { continue; };
 
         if device.is_infected_with(malware) 
             || infected_devices.contains(&device.id()) 
@@ -110,6 +108,37 @@ pub fn add_malicious_messages_to_queue(
         
         infected_devices.push(device.id());
     }
+}
+
+/// # Errors
+///
+/// Will return `Err` if the message is not malicious.
+pub fn try_handle_infection(
+    received_malicious_message: &Message,
+    receiver_ids: &[DeviceId],
+    device_map: &mut IdToDeviceMap,
+    delay_map: &IdToDelayMap,
+    current_time: Millisecond,
+) -> Result<(), MalwareSpreadError> {
+    let Some(malware) = received_malicious_message.malware() else { 
+        return Err(MalwareSpreadError::NotMalicious); 
+    };
+    
+    for receiver_id in receiver_ids {
+        let Some(receiver) = device_map.get_mut(receiver_id) else { continue; };
+        let transmission_delay = delay_map.get(receiver_id).unwrap_or(&0);
+
+        if current_time < received_malicious_message.time() 
+            + transmission_delay 
+            + malware.infection_delay()
+        {
+            continue;
+        }
+
+        receiver.handle_malware_infections();
+    }
+
+    Ok(())
 }
 
 
@@ -209,14 +238,11 @@ impl AttackerDevice {
             let malicious_message = Message::new(
                 self.device.id(), 
                 device.id(), 
-                current_time + malware.infection_delay(), 
+                current_time, 
                 MessageType::Malware(malware)
             );
 
-            message_queue.add_message(
-                malicious_message,
-                CONTROL_FREQUENCY, 
-            );
+            message_queue.add_message(malicious_message, CONTROL_FREQUENCY);
         }
     }
 }

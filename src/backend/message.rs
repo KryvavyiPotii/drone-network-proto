@@ -19,7 +19,7 @@ pub mod queue;
 
 
 const GPS_COST: MessageCost           = MessageCost(5.0);
-const MAL_INDICATOR_COST: MessageCost = MessageCost(1.0);
+const MAL_INDICATOR_COST: MessageCost = MessageCost(0.0);
 const MAL_JAMMING_COST: MessageCost   = MessageCost(15.0);
 const MAL_DOS_COST: MessageCost       = MessageCost(5.0);
 const SET_TASK_COST: MessageCost      = MessageCost(5.0); 
@@ -167,6 +167,15 @@ impl Message {
     #[must_use]
     pub fn message_type(&self) -> &MessageType {
         &self.message_type
+    }
+
+    #[must_use]
+    pub fn malware(&self) -> Option<&Malware> {
+        if let MessageType::Malware(malware) = &self.message_type {
+            return Some(malware);
+        }
+
+        None
     }
 
     #[must_use]

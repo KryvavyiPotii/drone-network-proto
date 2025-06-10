@@ -765,6 +765,8 @@ fn malware_infection(
     let drone_tx_control_area_radius = 25.0;
     let drone_gps_rx_signal_level    = GREEN_SIGNAL_LEVEL; 
     let attacker_tx_area_radius      = 50.0;
+    let malware = general_config.malware()
+        .expect("Missing malware type");
 
     let command_center = DeviceBuilder::new()
         .set_real_position(Point3D::new(100.0, 50.0, 0.0))
@@ -776,6 +778,7 @@ fn malware_infection(
             )
         )
         .set_signal_loss_response(SignalLossResponse::Ignore)
+        .set_vulnerabilities(&[malware])
         .build();
     let command_center_id = command_center.id();
 
@@ -800,8 +803,6 @@ fn malware_infection(
             )
         )
         .build();
-    let malware = general_config.malware()
-        .expect("Missing malware type");
     let attacker_devices = [
         AttackerDevice::new(
             attacker.clone(), 
@@ -840,7 +841,12 @@ fn malware_infection(
         topology, 
         text,
     );
-    let drone_colorings = vec![DeviceColoring::Signal]; 
+    let drone_colorings = match malware.malware_type() {
+        MalwareType::Indicator =>
+            vec![DeviceColoring::Infection],
+        MalwareType::Jamming(_) | MalwareType::DoS(_) => 
+            vec![DeviceColoring::Signal],
+    };
     let axes_ranges     = Axes3DRanges::new(0.0..100.0, 0.0..0.0, 0.0..100.0);
     let camera_angle    = CameraAngle::new(1.57, 1.57);
     let renderer        = PlottersRenderer::new(

@@ -103,12 +103,6 @@ impl IdToDeviceMap {
             });
     }
 
-    pub fn handle_infection(&mut self) {
-        self.0
-            .values_mut()
-            .for_each(Device::handle_infection);
-    }
-
     pub fn set_tx_signal_level(
         &mut self,
         signal_level: &SignalLevel,
