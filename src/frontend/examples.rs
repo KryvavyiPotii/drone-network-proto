@@ -300,8 +300,7 @@ fn gps_only(
     drone_positions: &[Point3D],
     vulnerabilities: &[Vec<Malware>],
 ) {
-    let drone_count = 100;
-    let cc_tx_control_area_radius    = 200.0;
+    let cc_tx_control_area_radius    = 300.0;
     let drone_tx_control_area_radius = 50.0;
     let drone_gps_rx_signal_level    = RED_SIGNAL_LEVEL; 
     let ewd_suppression_area_radius  = 100.0; 
@@ -320,7 +319,7 @@ fn gps_only(
     let command_center_id = command_center.id();
 
     let mut devices = create_drone_vec(
-        drone_count,
+        general_config.drone_count(),
         drone_positions,
         vulnerabilities,
         trx_system_type,
